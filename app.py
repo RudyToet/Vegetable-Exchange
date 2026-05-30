@@ -1,11 +1,13 @@
 """
-Vegetable Exchange — markttracker voor verse groenten, iPhone-Aandelen stijl.
-Dark mode, donkergroen, sparklines, KNMI-weeroverlay.
+Vegetable Exchange — markttracker voor verse groenten.
+Combilo-groen, iPhone-Aandelen stijl. Gedeelde data via GitHub-storage.
 """
+import base64
+import os
 import re
 import zipfile
 from datetime import datetime, timedelta, date
-from typing import Optional
+from pathlib import Path
 
 import altair as alt
 import pandas as pd
@@ -17,20 +19,22 @@ import streamlit as st
 # ============================================================================
 st.set_page_config(
     page_title="Vegetable Exchange",
-    page_icon="🥬",
+    page_icon="🌿",
     layout="centered",
     initial_sidebar_state="collapsed",
 )
 
-# Dark green palette — iOS Aandelen vibe
-BG = "#04130C"
-BG_CARD = "#0B2418"
-BORDER = "#163828"
+# Combilo green palette
+GREEN = "#6FB72D"           # Combilo brand green (fresh produce)
+GREEN_BRIGHT = "#82D845"    # brighter for emphasis
+BG = "#0A170D"              # dark green-tinted background
+BG_CARD = "#102414"
+BORDER = "#1B3825"
 TEXT = "#F2F4F0"
-TEXT_DIM = "#7C9489"
-UP = "#30D158"
+TEXT_DIM = "#8AA088"
+UP = GREEN                  # price up
+ACCENT = GREEN
 DOWN = "#FF453A"
-ACCENT = "#5EEAA8"
 SUN = "#FFB627"
 
 DUTCH_WD = ["Maandag", "Dinsdag", "Woensdag", "Donderdag", "Vrijdag", "Zaterdag", "Zondag"]
@@ -38,6 +42,20 @@ DUTCH_MO = ["januari", "februari", "maart", "april", "mei", "juni",
             "juli", "augustus", "september", "oktober", "november", "december"]
 DUTCH_MO_SHORT = ["jan", "feb", "mrt", "apr", "mei", "jun",
                   "jul", "aug", "sep", "okt", "nov", "dec"]
+
+DATA_FILE = "data/chat.txt"
+
+# ============================================================================
+# LOGO (inline SVG)
+# ============================================================================
+LOGO_SVG = f"""<svg width="36" height="36" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <rect width="100" height="100" rx="22" fill="{GREEN}"/>
+  <rect x="20" y="62" width="14" height="22" rx="2.5" fill="#FFFFFF"/>
+  <rect x="40" y="48" width="14" height="36" rx="2.5" fill="#FFFFFF"/>
+  <rect x="60" y="32" width="14" height="52" rx="2.5" fill="#FFFFFF"/>
+  <path d="M 67 28 C 60 16, 74 10, 84 14 C 88 24, 80 32, 70 30 C 68 30, 67 28, 67 28 Z" fill="#FFFFFF"/>
+  <path d="M 70 27 L 82 17" stroke="{GREEN}" stroke-width="1.5" fill="none" stroke-linecap="round"/>
+</svg>"""
 
 # ============================================================================
 # STYLE
@@ -52,17 +70,20 @@ st.markdown(f"""
   header[data-testid="stHeader"] {{ background: transparent; }}
 
   .ve-brand {{
-    display: flex; justify-content: space-between; align-items: baseline;
-    padding: 4px 4px 8px 4px;
+    display: flex; justify-content: space-between; align-items: center;
+    padding: 4px 4px 10px 4px;
     border-bottom: 0.5px solid {BORDER};
     margin-bottom: 4px;
   }}
+  .ve-brand-left {{
+    display: flex; align-items: center; gap: 10px;
+  }}
   .ve-brand-title {{
-    font-size: 28px; font-weight: 800; letter-spacing: -0.02em;
+    font-size: 24px; font-weight: 800; letter-spacing: -0.02em;
     color: {TEXT}; margin: 0; line-height: 1;
   }}
   .ve-brand-sub {{
-    font-size: 11px; color: {TEXT_DIM};
+    font-size: 10px; color: {TEXT_DIM};
     font-variant-numeric: tabular-nums; text-transform: uppercase;
     letter-spacing: 0.05em;
   }}
@@ -95,7 +116,7 @@ st.markdown(f"""
     min-width: 56px; text-align: center;
     font-variant-numeric: tabular-nums;
   }}
-  .pill-up   {{ background: {UP};   color: #032714; }}
+  .pill-up   {{ background: {UP};   color: #042311; }}
   .pill-down {{ background: {DOWN}; color: #2A0A09; }}
   .pill-flat {{ background: {BORDER}; color: {TEXT_DIM}; }}
 
@@ -240,7 +261,6 @@ def parse_chat(text):
     msg_pattern = re.compile(r"\[(\d{2})-(\d{2})-(\d{4}), \d{2}:\d{2}:\d{2}\]")
     date_re = re.compile(r"\b(ma|di|wo|do|vr|za|zo)\s+(\d{2})-(\d{2})\b")
     price_re = re.compile(r"^(.*?):\s*([0-9]+\.[0-9]+)\s*-\s*([0-9]+\.[0-9]+)\s*$")
-
     positions = [(m.start(), int(m.group(1)), int(m.group(2)), int(m.group(3)))
                  for m in msg_pattern.finditer(text)]
     rows = []
@@ -314,19 +334,192 @@ def read_uploaded(uploaded):
 
 
 # ============================================================================
-# KNMI WEATHER — De Bilt (station 260)
+# GITHUB COMMIT (admin uploads)
+# ============================================================================
+def commit_to_github(content: str) -> tuple[bool, str]:
+    """Save chat.txt to the GitHub repo via API. Triggers Streamlit redeploy."""
+    token = st.secrets.get("GITHUB_TOKEN", "")
+    repo = st.secrets.get("GITHUB_REPO", "")
+    if not token or not repo:
+        return False, "GitHub-token of repo niet geconfigureerd in Streamlit secrets."
+
+    url = f"https://api.github.com/repos/{repo}/contents/{DATA_FILE}"
+    headers = {
+        "Authorization": f"token {token}",
+        "Accept": "application/vnd.github+json",
+        "User-Agent": "vegetable-exchange/1.0",
+    }
+
+    # Get existing SHA (needed for updates)
+    sha = None
+    try:
+        r = requests.get(url, headers=headers, timeout=20)
+        if r.status_code == 200:
+            sha = r.json().get("sha")
+    except Exception:
+        pass
+
+    encoded = base64.b64encode(content.encode("utf-8")).decode("ascii")
+    payload = {
+        "message": f"Update marktdata {datetime.now().strftime('%Y-%m-%d %H:%M')}",
+        "content": encoded,
+    }
+    if sha:
+        payload["sha"] = sha
+
+    try:
+        r = requests.put(url, headers=headers, json=payload, timeout=30)
+    except Exception as e:
+        return False, f"Netwerkfout: {e}"
+
+    if r.status_code in (200, 201):
+        return True, "✅ Data opgeslagen op GitHub. Streamlit deployt opnieuw in ~30 sec."
+    return False, f"GitHub-fout {r.status_code}: {r.text[:200]}"
+
+
+# ============================================================================
+# DATA LOADING (data file first, upload as fallback)
+# ============================================================================
+def load_from_file() -> pd.DataFrame:
+    if not Path(DATA_FILE).exists():
+        return pd.DataFrame()
+    try:
+        with open(DATA_FILE, "r", encoding="utf-8", errors="replace") as f:
+            text = f.read()
+        return parse_cached(text)
+    except Exception:
+        return pd.DataFrame()
+
+
+# ============================================================================
+# HEADER
+# ============================================================================
+now = datetime.now()
+st.markdown(f"""
+<div class="ve-brand">
+  <div class="ve-brand-left">
+    {LOGO_SVG}
+    <div class="ve-brand-title">Vegetable Exchange</div>
+  </div>
+  <div class="ve-brand-sub">{fmt_dutch_short(now)} · {now.strftime('%H:%M')}</div>
+</div>
+""", unsafe_allow_html=True)
+
+# ============================================================================
+# VIEWER AUTH — wachtwoord voor kijkers
+# ============================================================================
+viewer_pass = st.secrets.get("VIEWER_PASSWORD", "")
+if viewer_pass and not st.session_state.get("viewer_auth"):
+    st.markdown(
+        f"<div style='padding:48px 0 16px 0;text-align:center;'>"
+        f"<div style='font-size:13px;color:{TEXT_DIM};text-transform:uppercase;"
+        f"letter-spacing:0.12em;font-weight:600;'>Toegang vereist</div>"
+        f"<div style='font-size:13px;color:{TEXT_DIM};margin-top:6px;'>"
+        f"Voer het wachtwoord in om de markt te zien</div>"
+        f"</div>",
+        unsafe_allow_html=True,
+    )
+    pw_in = st.text_input(
+        "Wachtwoord", type="password",
+        label_visibility="collapsed", placeholder="Wachtwoord",
+        key="viewer_pw_input",
+    )
+    if pw_in:
+        if pw_in == viewer_pass:
+            st.session_state.viewer_auth = True
+            st.rerun()
+        else:
+            st.error("Verkeerd wachtwoord.")
+    st.stop()
+
+# ============================================================================
+# DATA — try file first, then session state
+# ============================================================================
+if "df" not in st.session_state or st.session_state.get("df") is None:
+    df_file = load_from_file()
+    if not df_file.empty:
+        st.session_state.df = df_file
+
+df = st.session_state.get("df")
+
+# ============================================================================
+# ADMIN PANEL (always available)
+# ============================================================================
+admin_pass = st.secrets.get("ADMIN_PASSWORD", "")
+
+with st.expander("⚙️ Admin", expanded=(df is None or df.empty)):
+    if not admin_pass:
+        st.warning("Geen ADMIN_PASSWORD in secrets — gebruik tijdelijke upload (alleen voor deze sessie).")
+        uploaded = st.file_uploader(
+            "WhatsApp-export", type=["zip", "txt"], label_visibility="collapsed",
+        )
+        if uploaded is not None:
+            text = read_uploaded(uploaded)
+            if text:
+                with st.spinner("Verwerken..."):
+                    st.session_state.df = parse_cached(text)
+                st.success("Data geladen in sessie. Niet permanent — andere gebruikers zien dit niet.")
+                st.rerun()
+    else:
+        pw = st.text_input("Wachtwoord", type="password", key="admin_pw")
+        if pw and pw == admin_pass:
+            st.success("✓ Toegang verleend")
+            uploaded = st.file_uploader(
+                "Upload nieuwe WhatsApp-export",
+                type=["zip", "txt"], label_visibility="collapsed",
+            )
+            if uploaded is not None:
+                text = read_uploaded(uploaded)
+                if text:
+                    with st.spinner("Opslaan op GitHub..."):
+                        ok, msg = commit_to_github(text)
+                    if ok:
+                        st.success(msg)
+                        st.session_state.df = parse_cached(text)
+                        st.balloons()
+                    else:
+                        st.error(msg)
+                        st.session_state.df = parse_cached(text)
+                        st.warning("Data alleen voor deze sessie geladen.")
+        elif pw:
+            st.error("Verkeerd wachtwoord.")
+
+if df is None or df.empty:
+    st.info("Nog geen data beschikbaar. Vraag de beheerder om data te uploaden via Admin.")
+    st.stop()
+
+
+# ============================================================================
+# DERIVED
+# ============================================================================
+cat_daily = (df.groupby(["date", "category"])["mid"]
+               .mean().reset_index().sort_values(["category", "date"]))
+categories = sorted(df["category"].unique())
+latest_date = df["date"].max()
+
+
+def cat_on(cat, d):
+    sub = cat_daily[(cat_daily["category"] == cat) & (cat_daily["date"] == d)]
+    return float(sub["mid"].iloc[0]) if len(sub) else float("nan")
+
+
+def prev_date_for(cat, ref):
+    sub = cat_daily[(cat_daily["category"] == cat) & (cat_daily["date"] < ref)]["date"]
+    return sub.max() if len(sub) else None
+
+
+# ============================================================================
+# KNMI WEATHER
 # ============================================================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_knmi(start_d, end_d):
-    """Sunshine (SQ), mean temp (TG), precipitation (RH) from KNMI."""
     try:
         r = requests.post(
             "https://www.daggegevens.knmi.nl/klimatologie/daggegevens",
             data={
                 "start": start_d.strftime("%Y%m%d"),
                 "end": end_d.strftime("%Y%m%d"),
-                "vars": "SQ:TG:RH",
-                "stns": "260",
+                "vars": "SQ:TG:RH", "stns": "260",
             },
             headers={"User-Agent": "vegetable-exchange/1.0"},
             timeout=20,
@@ -356,61 +549,6 @@ def fetch_knmi(start_d, end_d):
 
 
 # ============================================================================
-# HEADER
-# ============================================================================
-now = datetime.now()
-st.markdown(f"""
-<div class="ve-brand">
-  <div class="ve-brand-title">Vegetable Exchange</div>
-  <div class="ve-brand-sub">{fmt_dutch_short(now)} · {now.strftime('%H:%M')}</div>
-</div>
-""", unsafe_allow_html=True)
-
-# ============================================================================
-# UPLOAD
-# ============================================================================
-with st.expander("⚙️ Update marktdata", expanded="df" not in st.session_state):
-    uploaded = st.file_uploader(
-        "WhatsApp-export (.zip of .txt)",
-        type=["zip", "txt"], label_visibility="collapsed",
-    )
-    if uploaded is not None:
-        text = read_uploaded(uploaded)
-        if not text:
-            st.error("Geen .txt in de ZIP.")
-            st.stop()
-        with st.spinner("Verwerken..."):
-            st.session_state.df = parse_cached(text)
-
-if "df" not in st.session_state:
-    st.info("Upload eerst de WhatsApp-export om te starten.")
-    st.stop()
-
-df = st.session_state.df
-if df.empty:
-    st.error("Geen prijzen herkend.")
-    st.stop()
-
-# ============================================================================
-# DERIVED — daily category mid prices
-# ============================================================================
-cat_daily = (df.groupby(["date", "category"])["mid"]
-               .mean().reset_index().sort_values(["category", "date"]))
-categories = sorted(df["category"].unique())
-latest_date = df["date"].max()
-
-
-def cat_on(cat, d):
-    sub = cat_daily[(cat_daily["category"] == cat) & (cat_daily["date"] == d)]
-    return float(sub["mid"].iloc[0]) if len(sub) else float("nan")
-
-
-def prev_date_for(cat, ref):
-    sub = cat_daily[(cat_daily["category"] == cat) & (cat_daily["date"] < ref)]["date"]
-    return sub.max() if len(sub) else None
-
-
-# ============================================================================
 # TABS
 # ============================================================================
 tab_markt, tab_detail, tab_yoy, tab_alerts = st.tabs(["Markt", "Detail", "YoY", "Alerts"])
@@ -432,7 +570,6 @@ with tab_markt:
             change_pct = (cur_mid - prev_mid) / prev_mid * 100 if prev_mid else 0
         else:
             change_pct = 0
-
         cutoff = latest_date - timedelta(days=30)
         spark_df = cat_daily[(cat_daily["category"] == cat) & (cat_daily["date"] >= cutoff)]
         spark_vals = spark_df["mid"].tolist()
@@ -441,7 +578,6 @@ with tab_markt:
         else:
             spark_color = TEXT_DIM
         spark_svg = sparkline_svg(spark_vals, color=spark_color)
-
         if abs(change_pct) < 0.5:
             pill_class = "pill-flat"
         elif change_pct > 0:
@@ -568,7 +704,6 @@ with tab_detail:
     ).configure_view(stroke=None)
     st.altair_chart(chart, use_container_width=True)
 
-    # Stats grid
     if len(period_df) > 0:
         pmin = period_df["mid"].min()
         pmax = period_df["mid"].max()
@@ -585,7 +720,6 @@ with tab_detail:
             yoy_val = f"{fmt_eur(yoy_avg)} ({fmt_pct(yoy_pct_val, 0)})"
         else:
             yoy_val = "—"
-
         weather_stats = ""
         if show_weather and not knmi_df.empty:
             sun_total = knmi_df["sunshine_h"].sum()
@@ -670,7 +804,7 @@ with tab_yoy:
                                       domainColor=BORDER, gridColor=BORDER,
                                       gridOpacity=0.3, title="€", titleColor=TEXT_DIM)),
                 color=alt.Color("year:O", title="Jaar",
-                                scale=alt.Scale(range=["#1F6D45", "#5EEAA8", "#A8F3CB"])),
+                                scale=alt.Scale(range=["#3D7016", "#6FB72D", "#A8E063"])),
                 xOffset="year:O",
                 tooltip=["year:O", "month_name:N", alt.Tooltip("mid:Q", format=".2f")],
             )
