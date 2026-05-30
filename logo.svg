@@ -1,0 +1,17 @@
+<svg width="120" height="120" viewBox="0 0 100 100" xmlns="http://www.w3.org/2000/svg">
+  <rect width="100" height="100" rx="22" fill="#6FB72D"/>
+  <!-- Ascending bar chart -->
+  <rect x="20" y="62" width="14" height="22" rx="2.5" fill="#FFFFFF"/>
+  <rect x="40" y="48" width="14" height="36" rx="2.5" fill="#FFFFFF"/>
+  <rect x="60" y="32" width="14" height="52" rx="2.5" fill="#FFFFFF"/>
+  <!-- Leaf on top of the tallest bar -->
+  <path d="M 67 28
+           C 60 16, 74 10, 84 14
+           C 88 24, 80 32, 70 30
+           C 68 30, 67 28, 67 28 Z"
+        fill="#FFFFFF"/>
+  <!-- Vein in leaf -->
+  <path d="M 70 27 L 82 17"
+        stroke="#6FB72D" stroke-width="1.5" fill="none"
+        stroke-linecap="round"/>
+</svg>
