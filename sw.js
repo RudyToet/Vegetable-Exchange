@@ -1,4 +1,4 @@
-const CACHE = "vpt-v5";
+const CACHE = "vpt-v6";
 const ASSETS = [
   "./", "./index.html", "./manifest.json",
   "./logo.png", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png",
@@ -6,7 +6,7 @@ const ASSETS = [
 ];
 
 self.addEventListener("install", e => {
-  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)).then(() => self.skipWaiting()));
+  e.waitUntil(caches.open(CACHE).then(c => c.addAll(ASSETS)));
 });
 
 self.addEventListener("activate", e => {
@@ -16,13 +16,15 @@ self.addEventListener("activate", e => {
   );
 });
 
+self.addEventListener("message", e => {
+  if (e.data && e.data.type === "SKIP_WAITING") self.skipWaiting();
+});
+
 self.addEventListener("fetch", e => {
   const url = e.request.url;
-  // Live data: always try network first, fall back to cache
   if (url.includes("prices.json") || url.includes("open-meteo") || url.includes("api.github")) {
     e.respondWith(fetch(e.request).catch(() => caches.match(e.request)));
     return;
   }
-  // App shell: cache first, then network
   e.respondWith(caches.match(e.request).then(r => r || fetch(e.request)));
 });

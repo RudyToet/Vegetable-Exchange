@@ -113,6 +113,19 @@ svg.chart{display:block;width:100%;overflow:visible;}
 .pcard .pr{font-size:30px;font-weight:800;margin-top:5px;letter-spacing:-.5px;}
 .pcard .pr span{font-size:16px;font-weight:700;}
 .pcard .sub{font-size:12px;color:var(--label2);margin-top:5px;line-height:1.4;}
+.seg-pred{margin:14px 0 12px;}
+.pred-h-scroll{display:flex;overflow-x:auto;gap:8px;padding-bottom:4px;-webkit-overflow-scrolling:touch;scrollbar-width:none;margin:0 -4px;}
+.pred-h-scroll::-webkit-scrollbar{display:none;}
+.pred-day{flex:0 0 auto;background:rgba(255,255,255,.05);border-radius:10px;padding:9px 11px;text-align:center;min-width:62px;}
+.pred-day .dn{font-size:11px;color:var(--label2);font-weight:700;text-transform:uppercase;letter-spacing:.5px;}
+.pred-day .dd{font-size:11px;color:var(--label3);margin-top:1px;}
+.pred-day .dp{font-size:14px;font-weight:600;margin-top:6px;font-variant-numeric:tabular-nums;}
+.pred-day .dc{font-size:11px;font-weight:700;margin-top:2px;font-variant-numeric:tabular-nums;}
+.pred-day .dc.up{color:var(--green);}.pred-day .dc.dn{color:var(--red);}.pred-day .dc.fl{color:var(--label3);}
+.pred-week{display:flex;justify-content:space-between;align-items:center;padding:10px 4px;border-bottom:.5px solid var(--sep);font-size:14px;}
+.pred-week:last-child{border-bottom:none;}
+.pred-week em{font-style:normal;color:var(--label2);font-size:12px;}
+.pred-week .wk-yoy{font-size:11px;color:var(--label3);margin-top:2px;}
 
 /* stats grid */
 .stats{display:grid;grid-template-columns:1fr 1fr;border-top:.5px solid var(--sep);margin-top:8px;}
@@ -422,7 +435,7 @@ function forecastSeries(s){
   if(X.length<40) return null;
   const model=ridge(X,y,1);
   const last=s[s.length-1].t, pmapExt={...pmap}, out=[];
-  for(let h=1;h<=7;h++){
+  for(let h=1;h<=14;h++){
     const dt=addDays(last,h);
     let f=buildFeat(dt,pmapExt,useW);
     if(!f){const lp=s[s.length-1].m;
@@ -438,7 +451,7 @@ function forecast(cat){return forecastSeries(seriesForCurrent(cat));}
 
 /* ---------- CHART (SVG, area + scrubber) ---------- */
 function buildChart(hist,fc,up){
-  const W=508,H=210,padT=8,padB=18;
+  const W=508,H=232,padT=10,padR=46,padB=28;
   const all=[...hist.map(p=>p.m)];
   let fcPts=[]; if(fc){fcPts=fc.points; all.push(...fcPts.map(p=>p.hi),...fcPts.map(p=>p.lo));}
   let lo=Math.min(...all),hi=Math.max(...all); if(lo===hi){hi=lo+0.1;}
@@ -446,7 +459,7 @@ function buildChart(hist,fc,up){
   const t0=hist[0].t.getTime();
   const tEnd=(fcPts.length?fcPts[fcPts.length-1].t:hist[hist.length-1].t).getTime();
   const span=Math.max(1,tEnd-t0);
-  const X=t=>((t-t0)/span)*W;
+  const X=t=>((t-t0)/span)*(W-padR);
   const Y=v=>padT+(1-(v-lo)/(hi-lo))*(H-padT-padB);
   const col=up?"var(--green)":"var(--red)";
   const colHex=up?"#6FB72D":"#FF453A";
@@ -471,12 +484,17 @@ function buildChart(hist,fc,up){
       <stop offset="0" stop-color="${colHex}" stop-opacity="0.28"/>
       <stop offset="1" stop-color="${colHex}" stop-opacity="0"/></linearGradient></defs>
     <path d="${area}" fill="url(#${gid})"/>
-    <line x1="0" x2="${W}" y1="${meanY.toFixed(1)}" y2="${meanY.toFixed(1)}" stroke="rgba(235,235,245,0.28)" stroke-width="1" stroke-dasharray="3 3"/>
-    <text x="${W-4}" y="${(meanY-5).toFixed(1)}" text-anchor="end" fill="rgba(235,235,245,0.55)" font-size="10" font-weight="600" style="font-variant-numeric:tabular-nums;letter-spacing:.5px;">GEM ${eur(meanV)}</text>
+    <line x1="0" x2="${W-padR}" y1="${meanY.toFixed(1)}" y2="${meanY.toFixed(1)}" stroke="rgba(235,235,245,0.28)" stroke-width="1" stroke-dasharray="3 3"/>
+    <text x="${(W-padR-4).toFixed(1)}" y="${(meanY-5).toFixed(1)}" text-anchor="end" fill="rgba(235,235,245,0.55)" font-size="10" font-weight="600" style="font-variant-numeric:tabular-nums;letter-spacing:.5px;">GEM ${eur(meanV)}</text>
     <path d="${line}" fill="none" stroke="${col}" stroke-width="2" stroke-linejoin="round" stroke-linecap="round"/>`;
   if(fcPath){svg+=`<path d="${fcArea}" fill="${colHex}" opacity="0.07"/>
     <path d="${fcPath}" fill="none" stroke="var(--blue)" stroke-width="2" stroke-dasharray="4 3" stroke-linecap="round"/>`;}
-  svg+=`<line id="scrubline" x1="0" y1="0" x2="0" y2="${H-padB}" stroke="rgba(255,255,255,.35)" stroke-width="1" style="opacity:0"/>
+  // Y-axis price labels (3, right side)
+  const yV=[hi,(lo+hi)/2,lo];
+  for(const v of yV){const yy=Y(v);svg+=`<text x="${W-2}" y="${(yy+3).toFixed(1)}" text-anchor="end" fill="rgba(235,235,245,0.55)" font-size="9" font-weight="600" style="font-variant-numeric:tabular-nums;">${eur(v)}</text>`;}
+  // X-axis date labels (4, bottom)
+  for(let i=0;i<4;i++){const f=i/3;const tt=t0+f*span;const xx=((tt-t0)/span)*(W-padR);const dd=new Date(tt);const ta=i===0?"start":(i===3?"end":"middle");svg+=`<text x="${xx.toFixed(1)}" y="${H-6}" text-anchor="${ta}" fill="rgba(235,235,245,0.55)" font-size="9" font-weight="600">${dd.getDate()} ${MO[dd.getMonth()]}</text>`;}
+  svg+=`<line id="scrubline" x1="0" y1="0" x2="0" y2="${(H-padB).toFixed(1)}" stroke="rgba(255,255,255,.35)" stroke-width="1" style="opacity:0"/>
     <circle id="scrubdot" r="4" fill="${col}" stroke="#000" stroke-width="2" style="opacity:0"/></svg>`;
   return {svg,meta:{X,Y,t0,span,W,H,hist}};
 }
@@ -578,6 +596,70 @@ function renderList(){
 
 /* ---------- RENDER DETAIL ---------- */
 const PERIODS={"1W":7,"1M":30,"3M":90,"6M":180,"1J":365,"ALL":99999};
+let predView="days";
+function setPredView(v){predView=v;renderDetail();}
+function isoWeek(d){const t=new Date(d.getTime());t.setHours(0,0,0,0);t.setDate(t.getDate()+4-(t.getDay()||7));const ys=new Date(t.getFullYear(),0,1);return Math.ceil(((t-ys)/86400000+1)/7);}
+function renderDayCards(fc,curPrice){
+  let html='<div class="pred-h-scroll">';
+  for(const p of fc.points){
+    const ch=curPrice?(p.m-curPrice)/curPrice*100:0;
+    const cls=Math.abs(ch)<0.5?"fl":(ch>0?"up":"dn");
+    const dn=WD[p.t.getDay()].slice(0,2);
+    html+=`<div class="pred-day"><div class="dn">${dn}</div><div class="dd">${p.t.getDate()} ${MO[p.t.getMonth()]}</div><div class="dp tnum">${eur(p.m)}</div><div class="dc ${cls} tnum">${pct(ch,0)}</div></div>`;
+  }
+  return html+'</div>';
+}
+function renderWeekRows(fc,curPrice,hist){
+  const weeks={};
+  const lastH=hist[hist.length-1].t;
+  for(const p of fc.points){
+    const wk=isoWeek(p.t),yr=p.t.getFullYear(),k=`${yr}-${wk}`;
+    if(!weeks[k])weeks[k]={wk,yr,actual:[],forecast:[]};
+    weeks[k].forecast.push(p.m);
+  }
+  // Add this week's historical
+  const lastWk=isoWeek(lastH),lastYr=lastH.getFullYear();
+  for(const p of hist.slice(-10)){
+    if(isoWeek(p.t)===lastWk&&p.t.getFullYear()===lastYr){
+      const k=`${lastYr}-${lastWk}`;
+      if(!weeks[k])weeks[k]={wk:lastWk,yr:lastYr,actual:[],forecast:[]};
+      weeks[k].actual.push(p.m);
+    }
+  }
+  // YoY: same week previous year
+  const allRows=DATA.rows||[];
+  const yoy={};
+  for(const k of Object.keys(weeks)){
+    const w=weeks[k];const pyDt=new Date(lastH);pyDt.setFullYear(pyDt.getFullYear()-1);
+    // collect rows from prev year that fall in week w.wk
+    const vals=[];
+    for(const r of allRows){
+      if(r.c!==curCat)continue;
+      if(currentFilter&&!currentFilter.includes(r.s))continue;
+      const d=parseD(r.d);
+      if(d.getFullYear()===w.yr-1&&isoWeek(d)===w.wk){vals.push(r.m);}
+    }
+    yoy[k]=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null;
+  }
+  const keys=Object.keys(weeks).sort();
+  let html='';
+  for(const k of keys){
+    const w=weeks[k];
+    const all=[...w.actual,...w.forecast];
+    if(!all.length)continue;
+    const avg=all.reduce((a,b)=>a+b,0)/all.length;
+    const isThis=w.wk===lastWk&&w.yr===lastYr;
+    const lbl=isThis?`Week ${w.wk} <em>(deze week)</em>`:`Week ${w.wk}`;
+    let yoyHtml='';
+    if(yoy[k]!=null){
+      const dy=(avg-yoy[k])/yoy[k]*100;
+      const cls=Math.abs(dy)<1?"":(dy>0?"up-c":"dn-c");
+      yoyHtml=`<div class="wk-yoy">v.j. ${eur(yoy[k])} <span class="${cls} tnum">(${pct(dy,0)})</span></div>`;
+    }
+    html+=`<div class="pred-week"><div><div>${lbl}</div>${yoyHtml}</div><div class="tnum" style="font-weight:600;">${eur(avg)}</div></div>`;
+  }
+  return html;
+}
 function openDetail(cat){curCat=cat;curPeriod="3M";currentFilter=null;document.body.classList.add("show-detail");renderDetail();updateFilterButton();
   loadWeather().then(()=>{if(curCat===cat)renderDetail();});}
 function closeDetail(){document.body.classList.remove("show-detail");}
@@ -593,11 +675,16 @@ function renderDetail(){
   const ch=buildChart(hist,fc,up);
   let segHtml=Object.keys(PERIODS).map(p=>`<button class="${p===curPeriod?"on":""}" onclick="setPeriod('${p}')">${p}</button>`).join("");
   let predHtml="";
-  if(fc){const p7=fc.points[fc.points.length-1].m,pd=p7-cur,pp=cur?pd/cur*100:0;
+  if(fc){
+    const p7d=fc.points[6]||fc.points[fc.points.length-1];
+    const p7=p7d.m,pd=p7-cur,pp=cur?pd/cur*100:0;
     const conf=fc.r2>0.7?"hoog":(fc.r2>0.5?"gemiddeld":"laag");
-    predHtml=`<div class="pcard"><div class="lbl">🔮 Verwacht over 7 dagen</div>
+    predHtml=`<div class="pcard"><div class="lbl">🔮 Voorspelling</div>
       <div class="pr tnum">${eur(p7)} <span class="${pd>=0?"up-c":"dn-c"}">${pd>=0?"▲":"▼"} ${pct(pp,0)}</span></div>
-      <div class="sub">Bandbreedte ${eur(fc.points[fc.points.length-1].lo)} – ${eur(fc.points[fc.points.length-1].hi)} · betrouwbaarheid ${conf} (R²=${fc.r2.toFixed(2)})${fc.usedWeather?"":" · zonder weerdata"}</div></div>`;
+      <div class="sub">over 7 dagen · bandbreedte ${eur(p7d.lo)} – ${eur(p7d.hi)} · ${conf} (R²=${fc.r2.toFixed(2)})${fc.usedWeather?"":" · zonder weerdata"}</div>
+      <div class="seg seg-pred"><button class="${predView==='days'?'on':''}" onclick="setPredView('days')">Per dag</button><button class="${predView==='weeks'?'on':''}" onclick="setPredView('weeks')">Per week</button></div>
+      <div class="pred-content">${predView==='days'?renderDayCards(fc,cur):renderWeekRows(fc,cur,pdf)}</div>
+      <div class="sub" style="margin-top:12px;font-size:11px;">Voorbij dag 7: onzekerheid groeit. Model: prijshistorie + KNMI-weer (indicatief).</div></div>`;
   }
   // stats
   const vals=hist.map(p=>p.m);const mn=Math.min(...vals),mx=Math.max(...vals),av=vals.reduce((a,b)=>a+b,0)/vals.length;
@@ -753,7 +840,22 @@ async function ghPut(path,content,token,msg){
 function isStandalone(){try{return window.navigator.standalone===true||matchMedia("(display-mode: standalone)").matches;}catch(e){return false;}}
 function maybeShowInstall(){if(!isStandalone()&&lsGet("vpt_installdismiss")!=="1"){const b=document.getElementById("installbar");if(b)b.classList.remove("hidden");}}
 function dismissInstall(){lsSet("vpt_installdismiss","1");const b=document.getElementById("installbar");if(b)b.classList.add("hidden");}
-if("serviceWorker" in navigator){window.addEventListener("load",()=>{navigator.serviceWorker.register("./sw.js").catch(()=>{});});}
+if("serviceWorker" in navigator){
+  window.addEventListener("load",()=>{
+    navigator.serviceWorker.register("./sw.js").then(reg=>{
+      reg.addEventListener("updatefound",()=>{
+        const sw=reg.installing;if(!sw)return;
+        sw.addEventListener("statechange",()=>{
+          if(sw.state==="installed"&&navigator.serviceWorker.controller){sw.postMessage({type:"SKIP_WAITING"});}
+        });
+      });
+    }).catch(()=>{});
+    let reloading=false;
+    navigator.serviceWorker.addEventListener("controllerchange",()=>{
+      if(reloading)return;reloading=true;window.location.reload();
+    });
+  });
+}
 
 /* ---------- BOOT ---------- */
 async function boot(){
