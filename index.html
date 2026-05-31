@@ -329,7 +329,7 @@ document.getElementById("gatepw").addEventListener("keydown",e=>{if(e.key==="Ent
 async function loadData(){
   try{
     const r=await fetch("./data/prices.json?t="+Date.now());
-    if(r.ok){const j=await r.json(); if(j.daily&&j.daily.length) DATA=j;}
+    if(r.ok){const j=await r.json(); if(j.rows&&j.rows.length){DATA=j;}else if(j.daily&&j.daily.length){console.warn("prices.json is in old format (no rows). Keeping embedded data.");}}
   }catch(e){}
 }
 function seriesFor(cat){return DATA.daily.filter(x=>x.c===cat).map(x=>({t:parseD(x.d),m:x.m})).sort((a,b)=>a.t-b.t);}
@@ -435,7 +435,7 @@ function forecastSeries(s){
   if(X.length<40) return null;
   const model=ridge(X,y,1);
   const last=s[s.length-1].t, pmapExt={...pmap}, out=[];
-  for(let h=1;h<=14;h++){
+  for(let h=1;h<=35;h++){
     const dt=addDays(last,h);
     let f=buildFeat(dt,pmapExt,useW);
     if(!f){const lp=s[s.length-1].m;
@@ -600,8 +600,13 @@ let predView="days";
 function setPredView(v){predView=v;renderDetail();}
 function isoWeek(d){const t=new Date(d.getTime());t.setHours(0,0,0,0);t.setDate(t.getDate()+4-(t.getDay()||7));const ys=new Date(t.getFullYear(),0,1);return Math.ceil(((t-ys)/86400000+1)/7);}
 function renderDayCards(fc,curPrice){
+  // Only Mon-Fri, and only the first trading week (current/upcoming)
+  const wd=fc.points.filter(p=>{const d=p.t.getDay();return d>=1&&d<=5;});
+  if(!wd.length)return '<div style="color:var(--label3);font-size:13px;padding:12px 4px;">Geen handelsdagen in voorspelling.</div>';
+  const firstWk=isoWeek(wd[0].t),firstYr=wd[0].t.getFullYear();
+  const thisWeek=wd.filter(p=>isoWeek(p.t)===firstWk&&p.t.getFullYear()===firstYr);
   let html='<div class="pred-h-scroll">';
-  for(const p of fc.points){
+  for(const p of thisWeek){
     const ch=curPrice?(p.m-curPrice)/curPrice*100:0;
     const cls=Math.abs(ch)<0.5?"fl":(ch>0?"up":"dn");
     const dn=WD[p.t.getDay()].slice(0,2);
@@ -610,18 +615,22 @@ function renderDayCards(fc,curPrice){
   return html+'</div>';
 }
 function renderWeekRows(fc,curPrice,hist){
+  // Weekdays only, group by ISO week, max 5 weeks ahead
   const weeks={};
-  const lastH=hist[hist.length-1].t;
   for(const p of fc.points){
-    const wk=isoWeek(p.t),yr=p.t.getFullYear(),k=`${yr}-${wk}`;
+    const dow=p.t.getDay();
+    if(dow===0||dow===6)continue; // skip weekend
+    const wk=isoWeek(p.t),yr=p.t.getFullYear(),k=`${yr}-W${String(wk).padStart(2,"0")}`;
     if(!weeks[k])weeks[k]={wk,yr,actual:[],forecast:[]};
     weeks[k].forecast.push(p.m);
   }
-  // Add this week's historical
+  // Add this week's historical weekdays
+  const lastH=hist[hist.length-1].t;
   const lastWk=isoWeek(lastH),lastYr=lastH.getFullYear();
   for(const p of hist.slice(-10)){
+    const dow=p.t.getDay();if(dow===0||dow===6)continue;
     if(isoWeek(p.t)===lastWk&&p.t.getFullYear()===lastYr){
-      const k=`${lastYr}-${lastWk}`;
+      const k=`${lastYr}-W${String(lastWk).padStart(2,"0")}`;
       if(!weeks[k])weeks[k]={wk:lastWk,yr:lastYr,actual:[],forecast:[]};
       weeks[k].actual.push(p.m);
     }
@@ -637,11 +646,11 @@ function renderWeekRows(fc,curPrice,hist){
       if(r.c!==curCat)continue;
       if(currentFilter&&!currentFilter.includes(r.s))continue;
       const d=parseD(r.d);
-      if(d.getFullYear()===w.yr-1&&isoWeek(d)===w.wk){vals.push(r.m);}
+      if(d.getFullYear()===w.yr-1&&isoWeek(d)===w.wk&&d.getDay()>=1&&d.getDay()<=5){vals.push(r.m);}
     }
     yoy[k]=vals.length?vals.reduce((a,b)=>a+b,0)/vals.length:null;
   }
-  const keys=Object.keys(weeks).sort();
+  const keys=Object.keys(weeks).sort().slice(0,5);
   let html='';
   for(const k of keys){
     const w=weeks[k];
@@ -683,7 +692,7 @@ function renderDetail(){
       <div class="pr tnum">${eur(p7)} <span class="${pd>=0?"up-c":"dn-c"}">${pd>=0?"▲":"▼"} ${pct(pp,0)}</span></div>
       <div class="sub">over 7 dagen · bandbreedte ${eur(p7d.lo)} – ${eur(p7d.hi)} · ${conf} (R²=${fc.r2.toFixed(2)})${fc.usedWeather?"":" · zonder weerdata"}</div>
       <div class="seg seg-pred"><button class="${predView==='days'?'on':''}" onclick="setPredView('days')">Per dag</button><button class="${predView==='weeks'?'on':''}" onclick="setPredView('weeks')">Per week</button></div>
-      <div class="pred-content">${predView==='days'?renderDayCards(fc,cur):renderWeekRows(fc,cur,pdf)}</div>
+      <div class="pred-content">${predView==='days'?renderDayCards(fc,cur):renderWeekRows(fc,cur,hist)}</div>
       <div class="sub" style="margin-top:12px;font-size:11px;">Voorbij dag 7: onzekerheid groeit. Model: prijshistorie + KNMI-weer (indicatief).</div></div>`;
   }
   // stats
@@ -737,7 +746,9 @@ function attachScrubber(meta){
 /* ---------- ADMIN ---------- */
 function openFilter(){
   if(!curCat)return;
-  const sizes=[...new Set((DATA.rows||[]).filter(r=>r.c===curCat).map(r=>r.s))];
+  let sizes=[...new Set((DATA.rows||[]).filter(r=>r.c===curCat).map(r=>r.s))];
+  if(!sizes.length)sizes=[...new Set((DATA.sortering||[]).filter(r=>r.c===curCat).map(r=>r.s))];
+  if(!sizes.length){document.getElementById("sizeoptions").innerHTML="<p style=\"color:var(--label2);font-size:13px;padding:12px 0;\">Geen sortering-data beschikbaar. Publiceer opnieuw via Admin om filter te activeren.</p>";document.getElementById("filtersheet").classList.add("on");return;}
   const active=currentFilter||sizes;
   let html="";
   for(const sz of sizes){
