@@ -6,7 +6,7 @@
 <meta name="apple-mobile-web-app-capable" content="yes">
 <meta name="apple-mobile-web-app-status-bar-style" content="black-translucent">
 <meta name="theme-color" content="#000000">
-<title>Vegetable Price Tracker</title>
+<title>Veg Prices</title>
 <link rel="apple-touch-icon" href="apple-touch-icon.png">
 <link rel="manifest" href="manifest.json">
 <style>
@@ -42,14 +42,14 @@ body.show-detail #list{transform:translateX(calc(-50% - 60px));}
 .filterbtn:active{opacity:.4;}
 .filterbtn.on{color:var(--green);}
 .filterbtn.on::after{content:"";position:absolute;top:6px;right:2px;width:7px;height:7px;border-radius:50%;background:var(--green);border:1.5px solid var(--bg);}
-.sizeopt{display:flex;align-items:center;justify-content:space-between;padding:13px 4px;border-bottom:.5px solid var(--sep);cursor:pointer;user-select:none;}
+.sizeopt{display:flex;align-items:center;justify-content:space-between;padding:9px 2px;border-bottom:.5px solid var(--sep);cursor:pointer;user-select:none;}
 .sizeopt:last-of-type{border-bottom:none;}
-.sizeopt input{appearance:none;-webkit-appearance:none;width:22px;height:22px;border:1.5px solid var(--label3);border-radius:50%;margin:0;flex-shrink:0;position:relative;cursor:pointer;}
+.sizeopt input{appearance:none;-webkit-appearance:none;width:19px;height:19px;border:1.5px solid var(--label3);border-radius:50%;margin:0;flex-shrink:0;position:relative;cursor:pointer;}
 .sizeopt input:checked{background:var(--green);border-color:var(--green);}
-.sizeopt input:checked::after{content:"";position:absolute;left:6px;top:2px;width:5px;height:11px;border:solid #04230f;border-width:0 2px 2px 0;transform:rotate(45deg);}
-.sizeopt .left{display:flex;align-items:center;gap:14px;flex:1;}
-.sizeopt .sname{font-size:16px;font-weight:500;color:var(--label);text-transform:capitalize;}
-.sizeopt .sprice{font-size:14px;color:var(--label2);font-variant-numeric:tabular-nums;}
+.sizeopt input:checked::after{content:"";position:absolute;left:5.5px;top:2px;width:4px;height:9px;border:solid #04230f;border-width:0 2px 2px 0;transform:rotate(45deg);}
+.sizeopt .left{display:flex;align-items:center;gap:11px;flex:1;min-width:0;}
+.sizeopt .sname{font-size:14px;font-weight:600;color:var(--label);text-transform:none;font-variant-numeric:tabular-nums;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
+.sizeopt .sprice{font-size:13px;color:var(--label2);font-variant-numeric:tabular-nums;min-width:66px;text-align:right;flex-shrink:0;}
 .sheet-inner .row-btns{display:flex;gap:8px;margin-top:18px;}
 .sheet-inner .row-btns button{flex:1;margin-top:0;}
 
@@ -181,9 +181,12 @@ svg.chart{display:block;width:100%;overflow:visible;}
 .sheet .msg.bad{background:rgba(255,69,58,.15);color:var(--red);}
 .sheet .close{font-size:15px;color:var(--green);text-align:center;margin-top:14px;cursor:pointer;font-weight:600;}
 .sort-row{display:flex;justify-content:space-between;align-items:center;padding:11px 2px;border-bottom:.5px solid var(--sep);}
-.sort-row .ss{font-size:15px;font-weight:600;color:var(--label);}
+.sort-row .ss{font-size:14px;font-weight:600;color:var(--label);font-variant-numeric:tabular-nums;min-width:56px;}
 .sort-row .right{display:flex;align-items:center;gap:10px;}
 .sort-row .vals{font-size:14px;color:var(--label);}
+.why{display:flex;align-items:center;gap:6px;margin-top:14px;padding:9px 0 2px;font-size:13px;font-weight:600;color:var(--blue);cursor:pointer;user-select:none;}
+.why:active{opacity:.5;}
+.why-body{font-size:13px;line-height:1.55;color:var(--label);margin-top:6px;padding:10px 12px;background:rgba(90,200,250,.07);border-radius:10px;border:.5px solid rgba(90,200,250,.18);}
 .installbar{background:var(--card);border:1px solid var(--green);border-radius:14px;padding:12px 14px;margin:10px 2px 0;display:flex;gap:10px;align-items:center;font-size:13px;color:var(--label2);}
 .installbar b{color:var(--label);font-weight:600;}
 .installbar .x{margin-left:auto;color:var(--label3);font-size:20px;cursor:pointer;padding:0 4px;}
@@ -195,7 +198,7 @@ svg.chart{display:block;width:100%;overflow:visible;}
 <!-- VIEWER GATE -->
 <div class="gate" id="gate">
   <img src="logo.png" alt="" onerror="this.style.display='none'">
-  <h1>Vegetable Price Tracker</h1>
+  <h1>Veg Prices</h1>
   <p>Voer het wachtwoord in</p>
   <input id="gatepw" type="password" placeholder="Wachtwoord" autocomplete="off">
   <div class="err" id="gateerr"></div>
@@ -206,7 +209,7 @@ svg.chart{display:block;width:100%;overflow:visible;}
 <div class="panel" id="list">
   <div class="brandrow">
     <img src="logo.png" alt="" onerror="this.style.display='none'">
-    <div class="ltitle" style="padding:0;flex:1;">Vegetable Price Tracker</div>
+    <div class="ltitle" style="padding:0;flex:1;">Veg Prices</div>
     <div class="gearbtn" onclick="openAdmin()">⚙︎</div>
   </div>
   <div class="lsub" id="listdate"></div>
@@ -283,6 +286,12 @@ let DATA = EMBEDDED;       // {daily:[{d,c,m}], sortering:[{c,s,lo,hi}], latest,
 let CATS = [];
 function deriveData(){
   if(DATA.rows && DATA.rows.length){
+    // Paprika 75ers en 85ers bestaan alleen in oude data — niet meer tonen
+    DATA.rows = DATA.rows.filter(r=>{
+      const c=String(r.c).toLowerCase(), sz=String(r.s).toLowerCase().trim();
+      const is75or85 = sz.endsWith("75ers")||sz.endsWith("85ers")||sz==="75+"||sz==="85+";
+      return !(c.startsWith("paprika") && is75or85);
+    });
     const agg={};
     DATA.rows.forEach(r=>{const k=r.d+"|"+r.c;(agg[k]=agg[k]||[]).push(r.m);});
     DATA.daily=Object.entries(agg).map(([k,v])=>{const[d,c]=k.split("|");return{d,c,m:v.reduce((a,b)=>a+b,0)/v.length};});
@@ -434,6 +443,12 @@ function forecastSeries(s){
   for(const p of s){const f=buildFeat(p.t,pmap,useW);if(f){X.push(f);y.push(p.m);}}
   if(X.length<40) return null;
   const model=ridge(X,y,1);
+  // Realistische bandbreedte uit recente historie — voorkomt dat het model wegloopt
+  // (geen voorspelling meer ver boven de week-high, zoals de €0,59 vs €0,39 bug)
+  const recent=s.slice(-120).map(p=>p.m);
+  const rLo=Math.min(...recent), rHi=Math.max(...recent), rng=(rHi-rLo)||rHi||0.1;
+  const bandLo=Math.max(0,rLo-rng*0.20), bandHi=rHi+rng*0.20;
+  const clamp=v=>Math.min(bandHi,Math.max(bandLo,v));
   const last=s[s.length-1].t, pmapExt={...pmap}, out=[];
   for(let h=1;h<=35;h++){
     const dt=addDays(last,h);
@@ -441,9 +456,9 @@ function forecastSeries(s){
     if(!f){const lp=s[s.length-1].m;
       f=[Math.sin(2*Math.PI*dayOfYear(dt)/365.25),Math.cos(2*Math.PI*dayOfYear(dt)/365.25),dt.getDay(),lp,lp,lp,lp,lp,0.05,0];
       if(useW)f.push(0,0);}
-    const pr=Math.max(0,pred1(model,f));
+    const pr=clamp(Math.max(0,pred1(model,f)));
     pmapExt[isoOf(dt)]=pr;
-    out.push({t:dt,m:pr,lo:Math.max(0,pr-model.sigma),hi:pr+model.sigma});
+    out.push({t:dt,m:pr,lo:clamp(Math.max(0,pr-model.sigma)),hi:clamp(pr+model.sigma)});
   }
   return{points:out,sigma:model.sigma,r2:model.r2,usedWeather:useW};
 }
@@ -509,7 +524,7 @@ function renderSortBlock(cat,catCur){
     const cur=ser[ser.length-1].m;
     const fc=forecastSize(cat,sz);
     let predHtml='<span style="color:var(--label2);font-size:13px;">—</span>',pillHtml='<div class="pill fl tnum" style="margin:0;min-width:50px;padding:2px 6px;font-size:11px;">—</div>';
-    if(fc){const pred=fc.points[fc.points.length-1].m;const ch=cur?((pred-cur)/cur*100):0;
+    if(fc){const p7=fc.points[6]||fc.points[fc.points.length-1];const pred=p7.m;const ch=cur?((pred-cur)/cur*100):0;
       const cls=Math.abs(ch)<0.5?"fl":(ch>0?"up":"dn");
       predHtml=`<span class="tnum" style="color:var(--label2);font-size:13px;">→ ${eur(pred)}</span>`;
       pillHtml=`<div class="pill ${cls} tnum" style="margin:0;min-width:50px;padding:2px 6px;font-size:11px;">${pct(ch,0)}</div>`;}
@@ -529,11 +544,11 @@ function sparkSVG(vals,up){
   return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><line x1="0" x2="${w}" y1="${meanY.toFixed(1)}" y2="${meanY.toFixed(1)}" stroke="rgba(235,235,245,0.22)" stroke-width="0.7" stroke-dasharray="2 2"/><path d="${d}" fill="none" stroke="${c}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="2" fill="${c}"/></svg>`;
 }
 function genSummary(){
-  const ld=latestDate();let ups=0,dn=0,movers=[];
+  const ld=latestDate();let ups=0,dn=0,movers=[],total=0;
   const groups={paprika:[],tomaten:[],komkommer:[],aubergine:[]};
   const predDir={};
   for(const c of CATS){
-    const s=seriesFor(c);if(s.length<2)continue;
+    const s=seriesFor(c);if(s.length<2)continue;total++;
     const cur=s[s.length-1].m,prev=s[s.length-2].m;
     const ch=(cur-prev)/prev*100;
     if(ch>0.5)ups++;else if(ch<-0.5)dn++;
@@ -544,20 +559,35 @@ function genSummary(){
       else if(c==="trostomaat"||c==="tomaat los"||c==="firenze")groups.tomaten.push(wch);
       else if(c==="komkommer")groups.komkommer.push(wch);
       else if(c==="aubergine")groups.aubergine.push(wch);}
-    const fc=forecast(c);if(fc){const p=fc.points[fc.points.length-1].m;predDir[c]=cur?((p-cur)/cur*100):0;}
+    const fc=forecast(c);if(fc){const pt=fc.points[6]||fc.points[fc.points.length-1];predDir[c]=cur?((pt.m-cur)/cur*100):0;}
   }
-  const parts=[`${ups} omhoog, ${dn} omlaag t.o.v. de vorige notering.`];
-  const gp=[];const gn={paprika:"paprika",tomaten:"tomaten",komkommer:"komkommer",aubergine:"aubergine"};
-  for(const[g,arr]of Object.entries(groups)){if(!arr.length)continue;const a=arr.reduce((x,y)=>x+y,0)/arr.length;
-    if(Math.abs(a)>=3)gp.push(`${gn[g]} ${pct(a,0)}`);}
-  if(gp.length)parts.push("Deze week: "+gp.join(", ")+".");
-  if(movers.length){movers.sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));
-    parts.push("Grootste beweger (7d): "+movers[0][0]+" "+pct(movers[0][1],0)+".");}
-  const pred=Object.entries(predDir);if(pred.length){let pu=0,pd=0;for(const[,ch]of pred){if(ch>1)pu++;else if(ch<-1)pd--;pd=Math.abs(pd);if(ch<-1)pd++;}
-    pu=pred.filter(([,c])=>c>1).length;pd=pred.filter(([,c])=>c<-1).length;
-    if(pu||pd)parts.push(`Verwacht komende 7d: ${pu} omhoog, ${pd} omlaag.`);
+  if(!total)return "Nog onvoldoende data voor een marktbeeld.";
+  // 1 — toon van de week, als lopende zin
+  const toon = ups>dn*1.5?"overwegend opwaarts":(dn>ups*1.5?"overwegend neerwaarts":"gemengd");
+  let s1=`De markt liet deze week een ${toon} beeld zien`;
+  if(ups||dn)s1+=`: van de ${total} producten noteerden er ${ups} hoger en ${dn} lager dan de vorige notering`;
+  s1+=".";
+  // 2 — grootste beweger, met groepscontext ingebed
+  let s2="";
+  if(movers.length){
+    movers.sort((a,b)=>Math.abs(b[1])-Math.abs(a[1]));const[mc,mv]=movers[0];
+    s2=`Vooral ${mc} sprong eruit met ${pct(mv,0)} over de week`;
+    const gn={paprika:"paprika",tomaten:"tomaten",komkommer:"komkommer",aubergine:"aubergine"};
+    const gp=[];
+    for(const[g,arr]of Object.entries(groups)){if(!arr.length)continue;
+      const a=arr.reduce((x,y)=>x+y,0)/arr.length;
+      if(Math.abs(a)>=3)gp.push(`${gn[g]} ${a>0?"trekt aan":"staat onder druk"} (${pct(a,0)})`);}
+    if(gp.length)s2+=`, terwijl ${gp.join(" en ")}`;
+    s2+=".";
   }
-  return parts.join(" ");
+  // 3 — vooruitblik als zin
+  let s3="";
+  const pu=Object.values(predDir).filter(v=>v>1).length, pd2=Object.values(predDir).filter(v=>v<-1).length;
+  if(pu||pd2){
+    const richt = pu>pd2?"per saldo meer stijgers dan dalers":(pd2>pu?"per saldo meer dalers dan stijgers":"een evenwichtig beeld");
+    s3=`Voor de komende zeven dagen wijst het model op ${richt} (${pu} omhoog, ${pd2} omlaag).`;
+  }
+  return [s1,s2,s3].filter(Boolean).join(" ");
 }
 function renderList(){
   document.getElementById("listdate").textContent=fmtLong(latestDate());
@@ -597,7 +627,50 @@ function renderList(){
 /* ---------- RENDER DETAIL ---------- */
 const PERIODS={"1W":7,"1M":30,"3M":90,"6M":180,"1J":365,"ALL":99999};
 let predView="days";
+let predExplain=false;
 function setPredView(v){predView=v;renderDetail();}
+function toggleExplain(){predExplain=!predExplain;renderDetail();}
+/* Plain-language ("journaaltaal") reading of the same signals the model uses */
+function explainForecast(cat,fc,cur,hist){
+  const p7d=fc.points[6]||fc.points[fc.points.length-1];
+  const pp=cur?(p7d.m-cur)/cur*100:0;
+  const richting=pp>1.5?"hoger":(pp<-1.5?"lager":"rond het huidige niveau");
+  // recente trend
+  const last=hist[hist.length-1].t;
+  const valDaysAgo=n=>{const tgt=addDays(last,-n);let best=null,bd=1e9;for(const p of hist){const dd=Math.abs(p.t-tgt);if(dd<bd){bd=dd;best=p.m;}}return best;};
+  const v7=valDaysAgo(7);const m7=v7?(cur-v7)/v7*100:0;
+  // band-positie (laatste ~90 dagen)
+  const recent=hist.slice(-90).map(p=>p.m);const rLo=Math.min(...recent),rHi=Math.max(...recent);
+  const posPct=(rHi>rLo)?(cur-rLo)/(rHi-rLo)*100:50;
+  // weer (instraling = aanvoer-driver in de kas)
+  let weerZin="";
+  if(fc.usedWeather&&WEATHER){
+    const avg=(a,b,key)=>{let s=0,c=0;for(let i=a;i<b;i++){const w=WEATHER[isoOf(addDays(last,i))];if(w&&w[key]!=null){s+=w[key];c++;}}return c?s/c:null;};
+    const sunNext=avg(1,8,"sun"),sunPrev=avg(-14,0,"sun");
+    if(sunNext!=null&&sunPrev!=null){
+      const ds=sunNext-sunPrev;
+      if(ds>1.2)weerZin="Het weermodel laat de komende dagen meer zon en doorgaans hogere temperaturen zien, wat de aanvoer uit de kassen opstuwt en op de prijs drukt.";
+      else if(ds<-1.2)weerZin="Het weermodel wijst juist op minder zon en koelere dagen, waardoor de aanvoer terugloopt en de prijs steun krijgt.";
+    }
+  }
+  // trend-zin
+  let trendZin="";
+  if(Math.abs(m7)>=4)trendZin=`De prijs ${m7>0?"liep de afgelopen week al op":"zakte de afgelopen week al"} (${pct(m7,0)}), en die lijn zet zich volgens het model grotendeels voort.`;
+  // band-zin
+  let bandZin="";
+  if(posPct<=20)bandZin="De notering zit nu onderin de bandbreedte van de afgelopen maanden, wat de ruimte naar beneden beperkt.";
+  else if(posPct>=80)bandZin="De notering zit bovenin de bandbreedte van de afgelopen maanden, wat de ruimte naar boven beperkt.";
+  // opbouw
+  let lead=`Het model verwacht ${cat} de komende zeven dagen ${richting}`;
+  lead += (richting==="rond het huidige niveau") ? " — per saldo nauwelijks beweging." : ` (${pct(pp,0)}).`;
+  const zinnen=[lead];
+  if(trendZin)zinnen.push(trendZin);
+  if(weerZin)zinnen.push(weerZin);
+  else if(!fc.usedWeather)zinnen.push("Weerdata kon nu niet worden meegewogen; de verwachting leunt puur op het prijspatroon.");
+  if(bandZin)zinnen.push(bandZin);
+  zinnen.push("Indicatief — gebaseerd op prijshistorie en het KNMI-weermodel, niet op marktnieuws of contracten.");
+  return zinnen.join(" ");
+}
 function isoWeek(d){const t=new Date(d.getTime());t.setHours(0,0,0,0);t.setDate(t.getDate()+4-(t.getDay()||7));const ys=new Date(t.getFullYear(),0,1);return Math.ceil(((t-ys)/86400000+1)/7);}
 function renderDayCards(fc,curPrice){
   // Only Mon-Fri, and only the first trading week (current/upcoming)
@@ -669,7 +742,7 @@ function renderWeekRows(fc,curPrice,hist){
   }
   return html;
 }
-function openDetail(cat){curCat=cat;curPeriod="3M";currentFilter=null;document.body.classList.add("show-detail");renderDetail();updateFilterButton();
+function openDetail(cat){curCat=cat;curPeriod="3M";currentFilter=null;predExplain=false;document.body.classList.add("show-detail");renderDetail();updateFilterButton();
   loadWeather().then(()=>{if(curCat===cat)renderDetail();});}
 function closeDetail(){document.body.classList.remove("show-detail");}
 function setPeriod(p){curPeriod=p;renderDetail();}
@@ -693,6 +766,8 @@ function renderDetail(){
       <div class="sub">over 7 dagen · bandbreedte ${eur(p7d.lo)} – ${eur(p7d.hi)} · ${conf} (R²=${fc.r2.toFixed(2)})${fc.usedWeather?"":" · zonder weerdata"}</div>
       <div class="seg seg-pred"><button class="${predView==='days'?'on':''}" onclick="setPredView('days')">Per dag</button><button class="${predView==='weeks'?'on':''}" onclick="setPredView('weeks')">Per week</button></div>
       <div class="pred-content">${predView==='days'?renderDayCards(fc,cur):renderWeekRows(fc,cur,hist)}</div>
+      <div class="why" onclick="toggleExplain()">${predExplain?"▾":"▸"} Waarom ${pp>1.5?"stijgt":(pp<-1.5?"daalt":"beweegt")} de prijs?</div>
+      ${predExplain?`<div class="why-body">${explainForecast(cat,fc,cur,hist).replace(/</g,"&lt;")}</div>`:""}
       <div class="sub" style="margin-top:12px;font-size:11px;">Voorbij dag 7: onzekerheid groeit. Model: prijshistorie + KNMI-weer (indicatief).</div></div>`;
   }
   // stats
