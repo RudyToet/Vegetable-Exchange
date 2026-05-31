@@ -1,4 +1,4 @@
-const CACHE = "vpt-v3";
+const CACHE = "vpt-v4";
 const ASSETS = [
   "./", "./index.html", "./manifest.json",
   "./logo.png", "./icon-192.png", "./icon-512.png", "./apple-touch-icon.png",

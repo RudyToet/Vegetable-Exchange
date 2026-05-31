@@ -246,25 +246,7 @@ function deriveData(){
   CATS=[...new Set((DATA.daily||[]).map(x=>x.c))].sort();
 }
 function seriesForSize(cat,sz){return (DATA.rows||[]).filter(r=>r.c===cat&&r.s===sz).map(r=>({t:parseD(r.d),m:r.m})).sort((a,b)=>a.t-b.t);}
-function forecastSize(cat,sz){
-  const s=seriesForSize(cat,sz);if(s.length<60)return null;
-  const pmap={};s.forEach(p=>pmap[isoOf(p.t)]=p.m);
-  const useW=WEATHER&&Object.keys(WEATHER).length>30;
-  const X=[],y=[];
-  for(const p of s){const dt=p.t;const lagDt=new Date(dt);lagDt.setDate(lagDt.getDate()-7);
-    const lag=pmap[isoOf(lagDt)];if(lag==null)continue;
-    const doy=dayOfYear(dt);const f=[Math.sin(2*Math.PI*doy/365.25),Math.cos(2*Math.PI*doy/365.25),lag];
-    if(useW){const su=trail(WEATHER,dt,"sun"),te=trail(WEATHER,dt,"temp");if(su==null||te==null)continue;f.push(su,te);}
-    X.push(f);y.push(p.m);}
-  if(X.length<40)return null;
-  const m=ridge(X,y,1);const last=s[s.length-1].t,out=[];
-  for(let h=1;h<=7;h++){const dt=new Date(last);dt.setDate(dt.getDate()+h);
-    const lagDt=new Date(dt);lagDt.setDate(lagDt.getDate()-7);let lag=pmap[isoOf(lagDt)];if(lag==null)lag=s[s.length-1].m;
-    const doy=dayOfYear(dt);const f=[Math.sin(2*Math.PI*doy/365.25),Math.cos(2*Math.PI*doy/365.25),lag];
-    if(useW){f.push(trail(WEATHER,dt,"sun")||0,trail(WEATHER,dt,"temp")||0);}
-    out.push({t:dt,m:Math.max(0,pred1(m,f))});}
-  return{points:out,sigma:m.sigma,r2:m.r2};
-}
+function forecastSize(cat,sz){return forecastSeries(seriesForSize(cat,sz));}
 let WEATHER = null;        // {date:{sun,temp}}
 let curCat = null, curPeriod = "3M";
 
@@ -350,36 +332,68 @@ function pred1(model,feat){let p=model.w[0];for(let j=0;j<feat.length;j++)p+=mod
 function dayOfYear(dt){return Math.floor((dt-new Date(dt.getFullYear(),0,0))/864e5);}
 function trail(map,dt,key,n=7){let s=0,c=0;for(let i=0;i<n;i++){const d=new Date(dt);d.setDate(d.getDate()-i);const w=map[isoOf(d)];if(w&&w[key]!=null){s+=w[key];c++;}}return c?s/c:null;}
 
-function forecast(cat){
-  const s=seriesFor(cat); if(s.length<60) return null;
-  // daily map for lags
-  const pmap={}; s.forEach(p=>pmap[isoOf(p.t)]=p.m);
-  const useW = WEATHER && Object.keys(WEATHER).length>30;
-  const X=[],y=[];
-  for(const p of s){
-    const dt=p.t, iso=isoOf(dt);
-    const lagDt=new Date(dt); lagDt.setDate(lagDt.getDate()-7);
-    const lag=pmap[isoOf(lagDt)]; if(lag==null) continue;
-    const doy=dayOfYear(dt);
-    const f=[Math.sin(2*Math.PI*doy/365.25),Math.cos(2*Math.PI*doy/365.25),lag];
-    if(useW){const su=trail(WEATHER,dt,"sun"),te=trail(WEATHER,dt,"temp");if(su==null||te==null)continue;f.push(su,te);}
-    X.push(f); y.push(p.m);
+/* Rich features: doy_sin/cos, dow, lag1/7/14, roll7/30, std14, chg7 (+weather optional)
+   Iterative 7-day forecast — predictions feed back as lag1 for next step. */
+function addDays(dt,n){const d=new Date(dt);d.setDate(d.getDate()+n);return d;}
+function densifyPmap(s){
+  const m={}; s.forEach(p=>m[isoOf(p.t)]=p.m);
+  if(s.length<2) return m;
+  const start=s[0].t.getTime(), end=s[s.length-1].t.getTime();
+  let lastK=null, lastKt=null;
+  for(let t=start;t<=end;t+=86400000){
+    const dt=new Date(t), k=isoOf(dt);
+    if(k in m){lastK=m[k];lastKt=dt;continue;}
+    if(lastK==null) continue;
+    let nk=null,nkt=null;
+    for(let t2=t+86400000;t2<=end;t2+=86400000){
+      const k2=isoOf(new Date(t2));
+      if(k2 in m){nk=m[k2];nkt=new Date(t2);break;}
+    }
+    if(nk!=null){
+      const gap=(nkt-lastKt)/86400000;
+      if(gap<=4){const df=(dt-lastKt)/86400000;m[k]=lastK+(nk-lastK)*(df/gap);}
+    }
   }
-  if(X.length<50) return null;
+  return m;
+}
+function buildFeat(dt,pmap,useW){
+  const k=isoOf;
+  const lag1=pmap[k(addDays(dt,-1))], lag7=pmap[k(addDays(dt,-7))], lag14=pmap[k(addDays(dt,-14))];
+  if(lag1==null||lag7==null||lag14==null) return null;
+  const w7=[],w14=[],w30=[];
+  for(let i=1;i<=30;i++){const v=pmap[k(addDays(dt,-i))];if(v!=null){w30.push(v);if(i<=14)w14.push(v);if(i<=7)w7.push(v);}}
+  if(w7.length<3||w14.length<5||w30.length<10) return null;
+  const mean=a=>a.reduce((x,y)=>x+y,0)/a.length;
+  const r7=mean(w7), r30=mean(w30), m14=mean(w14);
+  const s14=Math.sqrt(w14.reduce((s,v)=>s+(v-m14)**2,0)/w14.length);
+  const chg7=lag7?(lag1-lag7)/lag7:0;
+  const doy=dayOfYear(dt), dow=dt.getDay();
+  const f=[Math.sin(2*Math.PI*doy/365.25),Math.cos(2*Math.PI*doy/365.25),dow,lag1,lag7,lag14,r7,r30,s14,chg7];
+  if(useW){const su=trail(WEATHER,dt,"sun"),te=trail(WEATHER,dt,"temp");if(su==null||te==null)return null;f.push(su,te);}
+  return f;
+}
+function forecastSeries(s){
+  if(s.length<40) return null;
+  const pmap=densifyPmap(s);
+  const useW=WEATHER && Object.keys(WEATHER).length>30;
+  const X=[],y=[];
+  for(const p of s){const f=buildFeat(p.t,pmap,useW);if(f){X.push(f);y.push(p.m);}}
+  if(X.length<40) return null;
   const model=ridge(X,y,1);
-  const last=s[s.length-1].t, out=[];
+  const last=s[s.length-1].t, pmapExt={...pmap}, out=[];
   for(let h=1;h<=7;h++){
-    const dt=new Date(last);dt.setDate(dt.getDate()+h);
-    const lagDt=new Date(dt);lagDt.setDate(lagDt.getDate()-7);
-    let lag=pmap[isoOf(lagDt)]; if(lag==null)lag=s[s.length-1].m;
-    const doy=dayOfYear(dt);
-    const f=[Math.sin(2*Math.PI*doy/365.25),Math.cos(2*Math.PI*doy/365.25),lag];
-    if(useW){f.push(trail(WEATHER,dt,"sun")||0,trail(WEATHER,dt,"temp")||0);}
-    let pr=Math.max(0,pred1(model,f));
+    const dt=addDays(last,h);
+    let f=buildFeat(dt,pmapExt,useW);
+    if(!f){const lp=s[s.length-1].m;
+      f=[Math.sin(2*Math.PI*dayOfYear(dt)/365.25),Math.cos(2*Math.PI*dayOfYear(dt)/365.25),dt.getDay(),lp,lp,lp,lp,lp,0.05,0];
+      if(useW)f.push(0,0);}
+    const pr=Math.max(0,pred1(model,f));
+    pmapExt[isoOf(dt)]=pr;
     out.push({t:dt,m:pr,lo:Math.max(0,pr-model.sigma),hi:pr+model.sigma});
   }
-  return {points:out,sigma:model.sigma,r2:model.r2,usedWeather:useW};
+  return{points:out,sigma:model.sigma,r2:model.r2,usedWeather:useW};
 }
+function forecast(cat){return forecastSeries(seriesFor(cat));}
 
 /* ---------- CHART (SVG, area + scrubber) ---------- */
 function buildChart(hist,fc,up){
@@ -450,7 +464,9 @@ function sparkSVG(vals,up){
   const pts=vals.map((v,i)=>[i*w/(vals.length-1),h-2-((v-lo)/(hi-lo))*(h-4)]);
   const d="M"+pts.map(p=>p[0].toFixed(1)+" "+p[1].toFixed(1)).join(" L ");
   const c=up?"#6FB72D":"#FF453A";const last=pts[pts.length-1];
-  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><path d="${d}" fill="none" stroke="${c}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="2" fill="${c}"/></svg>`;
+  const mean=vals.reduce((a,b)=>a+b,0)/vals.length;
+  const meanY=h-2-((mean-lo)/(hi-lo))*(h-4);
+  return `<svg width="${w}" height="${h}" viewBox="0 0 ${w} ${h}"><line x1="0" x2="${w}" y1="${meanY.toFixed(1)}" y2="${meanY.toFixed(1)}" stroke="rgba(235,235,245,0.22)" stroke-width="0.7" stroke-dasharray="2 2"/><path d="${d}" fill="none" stroke="${c}" stroke-width="1.6" stroke-linecap="round" stroke-linejoin="round"/><circle cx="${last[0].toFixed(1)}" cy="${last[1].toFixed(1)}" r="2" fill="${c}"/></svg>`;
 }
 function genSummary(){
   const ld=latestDate();let ups=0,dn=0,movers=[];
