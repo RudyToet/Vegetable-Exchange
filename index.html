@@ -473,6 +473,14 @@ function forecastSeries(s,cat){
   const rLo=Math.min(...recent), rHi=Math.max(...recent), rng=(rHi-rLo)||rHi||0.1;
   const bandLo=Math.max(0,rLo-rng*0.20), bandHi=rHi+rng*0.20;
   const clamp=v=>Math.min(bandHi,Math.max(bandLo,v));
+  // Max geloofwaardige dag-op-dag beweging uit de eigen historie.
+  // Voorkomt onrealistische sprongen (bv. komkommer +38% op één dag / +84% in een week).
+  const rets=[];
+  for(let i=1;i<s.length;i++){const dd=Math.max(1,Math.round((s[i].t-s[i-1].t)/864e5));
+    if(s[i-1].m>0){const pd=Math.pow(s[i].m/s[i-1].m,1/dd)-1;if(isFinite(pd))rets.push(Math.abs(pd));}}
+  rets.sort((a,b)=>a-b);
+  const capDaily=rets.length?Math.min(0.07,Math.max(0.03,rets[Math.floor(rets.length*0.95)])):0.06;
+  const lastM=s[s.length-1].m;
   const last=s[s.length-1].t, pmapExt={...pmap}, out=[];
   for(let h=1;h<=35;h++){
     const dt=addDays(last,h);
@@ -480,7 +488,9 @@ function forecastSeries(s,cat){
     if(!f){const lp=s[s.length-1].m;
       f=[Math.sin(2*Math.PI*dayOfYear(dt)/365.25),Math.cos(2*Math.PI*dayOfYear(dt)/365.25),dt.getDay(),lp,lp,lp,lp,lp,0.05,0];
       if(useW){f.push(0,0);if(lagcfg)f.push(lagcfg.fill);}}
-    const pr=clamp(Math.max(0,pred1(model,f)));
+    let pr=clamp(Math.max(0,pred1(model,f)));
+    const prev=pmapExt[isoOf(addDays(dt,-1))]??lastM;          // gisteren (of laatste echte notering)
+    pr=Math.min(prev*(1+capDaily),Math.max(prev*(1-capDaily),pr));  // realistische dagstap
     pmapExt[isoOf(dt)]=pr;
     out.push({t:dt,m:pr,lo:clamp(Math.max(0,pr-model.sigma)),hi:clamp(pr+model.sigma)});
   }
@@ -798,10 +808,11 @@ function renderDetail(){
   if(fc){
     const p7d=fc.points[6]||fc.points[fc.points.length-1];
     const p7=p7d.m,pd=p7-cur,pp=cur?pd/cur*100:0;
-    const conf=fc.r2>0.7?"hoog":(fc.r2>0.5?"gemiddeld":"laag");
+    const relb=p7?((p7d.hi-p7d.lo)/2)/p7:0;
+    const spread=relb<0.06?"nauwe marge":(relb<0.15?"ruime marge":"brede marge");
     predHtml=`<div class="pcard"><div class="lbl">🔮 Voorspelling</div>
       <div class="pr tnum">${eur(p7)} <span class="${pd>=0?"up-c":"dn-c"}">${pd>=0?"▲":"▼"} ${pct(pp,0)}</span></div>
-      <div class="sub">over 7 dagen · bandbreedte ${eur(p7d.lo)} – ${eur(p7d.hi)} · ${conf} (R²=${fc.r2.toFixed(2)})${fc.usedWeather?"":" · zonder weerdata"}</div>
+      <div class="sub">over 7 dagen · bandbreedte ${eur(p7d.lo)} – ${eur(p7d.hi)} · ${spread}${fc.usedWeather?"":" · zonder weerdata"}</div>
       <div class="seg seg-pred"><button class="${predView==='days'?'on':''}" onclick="setPredView('days')">Per dag</button><button class="${predView==='weeks'?'on':''}" onclick="setPredView('weeks')">Per week</button></div>
       <div class="pred-content">${predView==='days'?renderDayCards(fc,cur):renderWeekRows(fc,cur,hist)}</div>
       <div class="why" onclick="toggleExplain()">${predExplain?"▾":"▸"} Waarom ${pp>1.5?"stijgt":(pp<-1.5?"daalt":"beweegt")} de prijs?</div>
