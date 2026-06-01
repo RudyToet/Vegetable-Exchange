@@ -411,6 +411,14 @@ const WLAG={
   "firenze":{drv:"rad",lag:0}, "komkommer":{drv:"rad",lag:1},
   "aubergine":{drv:"rad",lag:4}   // voorlopig: te weinig data, schatting o.b.v. teeltsnelheid
 };
+/* 7-daagse nauwkeurigheid, gemeten via walk-forward backtest op 3 jaar historie
+   (backtest.py). mape = gemiddelde afwijking %, dir = % weken dat de richting klopte.
+   Gebruikt om de voorspelling eerlijk te tonen: marge i.p.v. schijnprecisie. */
+const ACC7={
+  "aubergine":{mape:32,dir:51}, "firenze":{mape:18,dir:57}, "komkommer":{mape:33,dir:59},
+  "paprika geel":{mape:39,dir:62}, "paprika groen":{mape:31,dir:60}, "paprika oranje":{mape:38,dir:58},
+  "paprika rood":{mape:32,dir:69}, "tomaat los":{mape:27,dir:58}, "trostomaat":{mape:20,dir:58}
+};
 function lagFor(cat){if(!cat)return null;const c=cat.toLowerCase();
   if(WLAG[c])return WLAG[c];
   if(c.startsWith("paprika"))return {drv:"sun",lag:7};
@@ -881,16 +889,17 @@ function renderDetail(){
   if(fc){
     const p7d=fc.points[6]||fc.points[fc.points.length-1];
     const p7=p7d.m,pd=p7-cur,pp=cur?pd/cur*100:0;
-    const relb=p7?((p7d.hi-p7d.lo)/2)/p7:0;
-    const spread=relb<0.06?"nauwe marge":(relb<0.15?"ruime marge":"brede marge");
-    predHtml=`<div class="pcard"><div class="lbl">🔮 Voorspelling</div>
-      <div class="pr tnum">${eur(p7)} <span class="${pd>=0?"up-c":"dn-c"}">${pd>=0?"▲":"▼"} ${pct(pp,0)}</span></div>
-      <div class="sub">over 7 dagen · bandbreedte ${eur(p7d.lo)} – ${eur(p7d.hi)} · ${spread}${fc.usedWeather?"":" · zonder weerdata"}</div>
+    const acc=ACC7[cat.toLowerCase()]||{mape:25,dir:null};
+    const lo7=Math.max(0,p7*(1-acc.mape/100)), hi7=p7*(1+acc.mape/100);
+    const dir = pp>3?{w:"waarschijnlijk hoger",c:"up-c",a:"▲"} : (pp<-3?{w:"waarschijnlijk lager",c:"dn-c",a:"▼"} : {w:"ongeveer gelijk",c:"",a:"→"});
+    predHtml=`<div class="pcard"><div class="lbl">🔮 Verwachting komende week (indicatief)</div>
+      <div class="pr"><span class="${dir.c}">${dir.a} ${dir.w}</span> <span class="tnum" style="font-size:14px;color:var(--label2);font-weight:600;">~${pct(pp,0)}</span></div>
+      <div class="sub">ruwe indicatie over 7 dagen: ${eur(lo7)} – ${eur(hi7)}${acc.dir!=null?` · richting klopte historisch ~${acc.dir}% van de weken`:""}${fc.usedWeather?"":" · zonder weerdata"}</div>
       <div class="seg seg-pred"><button class="${predView==='days'?'on':''}" onclick="setPredView('days')">Per dag</button><button class="${predView==='weeks'?'on':''}" onclick="setPredView('weeks')">Per week</button></div>
       <div class="pred-content">${predView==='days'?renderDayCards(fc,cur):renderWeekRows(fc,cur,hist)}</div>
       <div class="why" onclick="toggleExplain()">${predExplain?"▾":"▸"} Waarom ${pp>1.5?"stijgt":(pp<-1.5?"daalt":"beweegt")} de prijs?</div>
       ${predExplain?`<div class="why-body">${explainForecast(cat,fc,cur,hist).replace(/</g,"&lt;")}</div>`:""}
-      <div class="sub" style="margin-top:12px;font-size:11px;">Voorbij dag 7: onzekerheid groeit. Model: prijshistorie + KNMI-weer (indicatief).</div></div>`;
+      <div class="sub" style="margin-top:12px;font-size:11px;">Dag 1–2 zijn redelijk betrouwbaar; verder vooruit is dit vooral een richting, geen exacte prijs. De dag- en weekbedragen hieronder zijn modelschattingen binnen die marge.</div></div>`;
   }
   // stats
   const vals=hist.map(p=>p.m);const mn=Math.min(...vals),mx=Math.max(...vals),av=vals.reduce((a,b)=>a+b,0)/vals.length;
