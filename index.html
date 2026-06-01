@@ -300,7 +300,7 @@ function deriveData(){
   CATS=[...new Set((DATA.daily||[]).map(x=>x.c))].sort();
 }
 function seriesForSize(cat,sz){return (DATA.rows||[]).filter(r=>r.c===cat&&r.s===sz).map(r=>({t:parseD(r.d),m:r.m})).sort((a,b)=>a.t-b.t);}
-function forecastSize(cat,sz){return forecastSeries(seriesForSize(cat,sz));}
+function forecastSize(cat,sz){return forecastSeries(seriesForSize(cat,sz),cat);}
 let WEATHER = null;        // {date:{sun,temp}}
 let curCat = null, curPeriod = "3M";
 
@@ -359,19 +359,20 @@ async function loadWeather(){
   if(WEATHER) return WEATHER;
   WEATHER={};
   const all=DATA.daily.map(x=>x.d).sort();
-  const start=all[0];
+  const sd=new Date(all[0]); sd.setDate(sd.getDate()-77);  // extra historie voor lag-features (max ~10 weken)
+  const start=sd.toISOString().slice(0,10);
   try{
-    const a=await fetch(`https://archive-api.open-meteo.com/v1/archive?latitude=52.1&longitude=5.18&start_date=${start}&end_date=${isoOffset(-7)}&daily=sunshine_duration,temperature_2m_mean&timezone=Europe%2FAmsterdam`);
+    const a=await fetch(`https://archive-api.open-meteo.com/v1/archive?latitude=52.0&longitude=4.3&start_date=${start}&end_date=${isoOffset(-7)}&daily=shortwave_radiation_sum,sunshine_duration,temperature_2m_mean&timezone=Europe%2FAmsterdam`);
     const aj=await a.json(); ingest(aj);
   }catch(e){}
   try{
-    const f=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=52.1&longitude=5.18&daily=sunshine_duration,temperature_2m_mean&past_days=14&forecast_days=14&timezone=Europe%2FAmsterdam&models=knmi_seamless`);
+    const f=await fetch(`https://api.open-meteo.com/v1/forecast?latitude=52.0&longitude=4.3&daily=shortwave_radiation_sum,sunshine_duration,temperature_2m_mean&past_days=14&forecast_days=14&timezone=Europe%2FAmsterdam&models=knmi_seamless`);
     const fj=await f.json(); ingest(fj);
   }catch(e){}
   return WEATHER;
 }
-function ingest(j){if(!j||!j.daily||!j.daily.time)return;const t=j.daily.time,s=j.daily.sunshine_duration,tm=j.daily.temperature_2m_mean;
-  for(let i=0;i<t.length;i++){WEATHER[t[i]]={sun:s&&s[i]!=null?s[i]/3600:null,temp:tm?tm[i]:null};}}
+function ingest(j){if(!j||!j.daily||!j.daily.time)return;const t=j.daily.time,s=j.daily.sunshine_duration,tm=j.daily.temperature_2m_mean,rd=j.daily.shortwave_radiation_sum;
+  for(let i=0;i<t.length;i++){WEATHER[t[i]]={sun:s&&s[i]!=null?s[i]/3600:null,temp:tm?tm[i]:null,rad:rd&&rd[i]!=null?rd[i]:null};}}
 function isoOffset(days){const d=new Date();d.setDate(d.getDate()+days);return d.toISOString().slice(0,10);}
 function isoOf(dt){return dt.toISOString().slice(0,10);}
 
@@ -394,6 +395,25 @@ function ridge(X,y,lam=1){const n=X.length,k=X[0].length,mu=Array(k).fill(0),sd=
 function pred1(model,feat){let p=model.w[0];for(let j=0;j<feat.length;j++)p+=model.w[j+1]*((feat[j]-model.mu[j])/model.sd[j]);return p;}
 function dayOfYear(dt){return Math.floor((dt-new Date(dt.getFullYear(),0,0))/864e5);}
 function trail(map,dt,key,n=7){let s=0,c=0;for(let i=0;i<n;i++){const d=new Date(dt);d.setDate(d.getDate()-i);const w=map[isoOf(d)];if(w&&w[key]!=null){s+=w[key];c++;}}return c?s/c:null;}
+
+/* Per-product weer-driver + lag (weken), empirisch bepaald op 3 jaar prijs vs Open-Meteo.
+   Negatieve correlatie: meer licht ⇒ meer aanvoer ⇒ lagere prijs. */
+const WLAG={
+  "paprika rood":{drv:"sun",lag:7}, "paprika oranje":{drv:"sun",lag:7},
+  "paprika geel":{drv:"sun",lag:6}, "paprika groen":{drv:"sun",lag:10},
+  "trostomaat":{drv:"rad",lag:4}, "tomaat los":{drv:"rad",lag:4},
+  "firenze":{drv:"rad",lag:0}, "komkommer":{drv:"rad",lag:1},
+  "aubergine":{drv:"rad",lag:4}   // voorlopig: te weinig data, schatting o.b.v. teeltsnelheid
+};
+function lagFor(cat){if(!cat)return null;const c=cat.toLowerCase();
+  if(WLAG[c])return WLAG[c];
+  if(c.startsWith("paprika"))return {drv:"sun",lag:7};
+  return null;}
+function driverMean(drv){let s=0,c=0;for(const k in WEATHER){const v=WEATHER[k][drv];if(v!=null){s+=v;c++;}}return c?s/c:null;}
+/* gemiddelde driver-waarde in een week rond dt - lag weken (zelfde resampling als de analyse) */
+function wlagVal(dt,drv,lagW){const base=addDays(dt,-lagW*7);let s=0,c=0;
+  for(let i=-3;i<=3;i++){const w=WEATHER[isoOf(addDays(base,i))];if(w&&w[drv]!=null){s+=w[drv];c++;}}
+  return c>=3?s/c:null;}
 
 /* Rich features: doy_sin/cos, dow, lag1/7/14, roll7/30, std14, chg7 (+weather optional)
    Iterative 7-day forecast — predictions feed back as lag1 for next step. */
@@ -419,7 +439,7 @@ function densifyPmap(s){
   }
   return m;
 }
-function buildFeat(dt,pmap,useW){
+function buildFeat(dt,pmap,useW,lagcfg){
   const k=isoOf;
   const lag1=pmap[k(addDays(dt,-1))], lag7=pmap[k(addDays(dt,-7))], lag14=pmap[k(addDays(dt,-14))];
   if(lag1==null||lag7==null||lag14==null) return null;
@@ -432,15 +452,19 @@ function buildFeat(dt,pmap,useW){
   const chg7=lag7?(lag1-lag7)/lag7:0;
   const doy=dayOfYear(dt), dow=dt.getDay();
   const f=[Math.sin(2*Math.PI*doy/365.25),Math.cos(2*Math.PI*doy/365.25),dow,lag1,lag7,lag14,r7,r30,s14,chg7];
-  if(useW){const su=trail(WEATHER,dt,"sun"),te=trail(WEATHER,dt,"temp");if(su==null||te==null)return null;f.push(su,te);}
+  if(useW){const su=trail(WEATHER,dt,"sun"),te=trail(WEATHER,dt,"temp");if(su==null||te==null)return null;f.push(su,te);
+    if(lagcfg){let lv=wlagVal(dt,lagcfg.drv,lagcfg.lag);if(lv==null)lv=lagcfg.fill;f.push(lv);}}
   return f;
 }
-function forecastSeries(s){
+function forecastSeries(s,cat){
   if(s.length<40) return null;
   const pmap=densifyPmap(s);
   const useW=WEATHER && Object.keys(WEATHER).length>30;
+  // product-specifieke weer-lag (alleen als de driver-data echt geladen is)
+  let lagcfg=null;
+  if(useW){const lc=lagFor(cat);if(lc){const lm=driverMean(lc.drv);if(lm!=null)lagcfg={drv:lc.drv,lag:lc.lag,fill:lm};}}
   const X=[],y=[];
-  for(const p of s){const f=buildFeat(p.t,pmap,useW);if(f){X.push(f);y.push(p.m);}}
+  for(const p of s){const f=buildFeat(p.t,pmap,useW,lagcfg);if(f){X.push(f);y.push(p.m);}}
   if(X.length<40) return null;
   const model=ridge(X,y,1);
   // Realistische bandbreedte uit recente historie — voorkomt dat het model wegloopt
@@ -452,17 +476,17 @@ function forecastSeries(s){
   const last=s[s.length-1].t, pmapExt={...pmap}, out=[];
   for(let h=1;h<=35;h++){
     const dt=addDays(last,h);
-    let f=buildFeat(dt,pmapExt,useW);
+    let f=buildFeat(dt,pmapExt,useW,lagcfg);
     if(!f){const lp=s[s.length-1].m;
       f=[Math.sin(2*Math.PI*dayOfYear(dt)/365.25),Math.cos(2*Math.PI*dayOfYear(dt)/365.25),dt.getDay(),lp,lp,lp,lp,lp,0.05,0];
-      if(useW)f.push(0,0);}
+      if(useW){f.push(0,0);if(lagcfg)f.push(lagcfg.fill);}}
     const pr=clamp(Math.max(0,pred1(model,f)));
     pmapExt[isoOf(dt)]=pr;
     out.push({t:dt,m:pr,lo:clamp(Math.max(0,pr-model.sigma)),hi:clamp(pr+model.sigma)});
   }
-  return{points:out,sigma:model.sigma,r2:model.r2,usedWeather:useW};
+  return{points:out,sigma:model.sigma,r2:model.r2,usedWeather:useW,usedLag:!!lagcfg};
 }
-function forecast(cat){return forecastSeries(seriesForCurrent(cat));}
+function forecast(cat){return forecastSeries(seriesForCurrent(cat),cat);}
 
 /* ---------- CHART (SVG, area + scrubber) ---------- */
 function buildChart(hist,fc,up){
@@ -642,15 +666,29 @@ function explainForecast(cat,fc,cur,hist){
   // band-positie (laatste ~90 dagen)
   const recent=hist.slice(-90).map(p=>p.m);const rLo=Math.min(...recent),rHi=Math.max(...recent);
   const posPct=(rHi>rLo)?(cur-rLo)/(rHi-rLo)*100:50;
-  // weer (instraling = aanvoer-driver in de kas)
+  // weer: licht dat ~lag weken geleden viel bepaalt de aanvoer die nu binnenkomt
   let weerZin="";
   if(fc.usedWeather&&WEATHER){
-    const avg=(a,b,key)=>{let s=0,c=0;for(let i=a;i<b;i++){const w=WEATHER[isoOf(addDays(last,i))];if(w&&w[key]!=null){s+=w[key];c++;}}return c?s/c:null;};
-    const sunNext=avg(1,8,"sun"),sunPrev=avg(-14,0,"sun");
-    if(sunNext!=null&&sunPrev!=null){
-      const ds=sunNext-sunPrev;
-      if(ds>1.2)weerZin="Het weermodel laat de komende dagen meer zon en doorgaans hogere temperaturen zien, wat de aanvoer uit de kassen opstuwt en op de prijs drukt.";
-      else if(ds<-1.2)weerZin="Het weermodel wijst juist op minder zon en koelere dagen, waardoor de aanvoer terugloopt en de prijs steun krijgt.";
+    const cfg=lagFor(cat);
+    if(cfg){
+      const lab=cfg.drv==="sun"?"zonuren":"zonnestraling";
+      const lv=wlagVal(last,cfg.drv,cfg.lag);
+      let s=0,c=0;for(let i=cfg.lag*7-28;i<=cfg.lag*7+28;i++){const w=WEATHER[isoOf(addDays(last,-i))];if(w&&w[cfg.drv]!=null){s+=w[cfg.drv];c++;}}
+      const norm=c?s/c:null;
+      if(lv!=null&&norm){const rel=(lv-norm)/norm*100;
+        const wkn=cfg.lag===0?"van de afgelopen dagen":`van ~${cfg.lag} ${cfg.lag===1?"week":"weken"} geleden`;
+        if(rel>=8)weerZin=`De hoeveelheid ${lab} ${wkn} — bepalend voor de aanvoer die nu binnenkomt — lag boven normaal, wat op de prijs drukt.`;
+        else if(rel<=-8)weerZin=`De hoeveelheid ${lab} ${wkn} — bepalend voor de aanvoer die nu binnenkomt — lag onder normaal, wat de prijs steun geeft.`;
+        else weerZin=`De hoeveelheid ${lab} ${wkn}, die de aanvoer van nu bepaalt, lag rond normaal.`;
+      }
+    }
+    if(!weerZin){
+      const avg=(a,b,key)=>{let s=0,c=0;for(let i=a;i<b;i++){const w=WEATHER[isoOf(addDays(last,i))];if(w&&w[key]!=null){s+=w[key];c++;}}return c?s/c:null;};
+      const sunNext=avg(1,8,"sun"),sunPrev=avg(-14,0,"sun");
+      if(sunNext!=null&&sunPrev!=null){const ds=sunNext-sunPrev;
+        if(ds>1.2)weerZin="Het weermodel laat de komende dagen meer zon zien, wat de aanvoer opstuwt en op de prijs drukt.";
+        else if(ds<-1.2)weerZin="Het weermodel wijst op minder zon, waardoor de aanvoer terugloopt en de prijs steun krijgt.";
+      }
     }
   }
   // trend-zin
