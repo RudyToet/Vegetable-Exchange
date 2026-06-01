@@ -269,6 +269,12 @@ svg.chart{display:block;width:100%;overflow:visible;}
       <button class="btn" onclick="publish()">Publiceren naar iedereen</button>
       <button class="btn sec" onclick="applyLocal()">Alleen op dit toestel tonen</button>
       <div id="adminmsg"></div>
+      <div style="margin-top:18px;border-top:.5px solid var(--sep);padding-top:14px;">
+        <label style="margin:0;">Model-check (alleen admin)</label>
+        <p style="font-size:12px;color:var(--label2);margin:4px 0 8px;">Voorspeld vs. werkelijk, per product. Exporteer en stuur naar Claude om het model bij te stellen.</p>
+        <div id="accbox"></div>
+        <button class="btn sec" onclick="exportFcLog()" style="margin-top:10px;">Exporteer voorspel-log</button>
+      </div>
     </div>
     <div class="close" onclick="closeAdmin()">Sluiten</div>
   </div>
@@ -791,9 +797,76 @@ function renderWeekRows(fc,curPrice,hist){
   return html;
 }
 function openDetail(cat){curCat=cat;curPeriod="3M";currentFilter=null;predExplain=false;document.body.classList.add("show-detail");renderDetail();updateFilterButton();
-  loadWeather().then(()=>{if(curCat===cat)renderDetail();});}
+  loadWeather().then(()=>{logForecasts();if(curCat===cat)renderDetail();});}
 function closeDetail(){document.body.classList.remove("show-detail");}
 function setPeriod(p){curPeriod=p;renderDetail();}
+
+/* ---------- VOORSPELLING vs UITKOMST ----------
+   Legt elke dag de 7-daagse voorspelling vast (per toestel) en beoordeelt
+   die zodra de echte noteringen binnen zijn. */
+function logForecasts(){
+  if(!DATA||!DATA.latest||!CATS) return;
+  const made=DATA.latest;
+  let log={}; try{log=JSON.parse(lsGet("vpt_fclog")||"{}");}catch(e){log={};}
+  if(log[made]) return;                    // al vastgelegd voor deze noteringsdatum
+  const rec={made,items:{}};
+  for(const c of CATS){
+    const s=seriesFor(c); if(s.length<40) continue;
+    const fc=forecastSeries(s,c); if(!fc) continue;
+    rec.items[c]={base:s[s.length-1].m,pts:fc.points.slice(0,7).map(p=>({d:isoOf(p.t),m:Math.round(p.m*1000)/1000}))};
+  }
+  if(!Object.keys(rec.items).length) return;
+  log[made]=rec;
+  const keys=Object.keys(log).sort(); while(keys.length>150){delete log[keys.shift()];}
+  lsSet("vpt_fclog",JSON.stringify(log));
+}
+function gradeForCat(cat){
+  let log={}; try{log=JSON.parse(lsGet("vpt_fclog")||"{}");}catch(e){return null;}
+  const acts=DATA.daily.filter(x=>x.c===cat).map(x=>({t:parseD(x.d),m:x.m})).sort((a,b)=>a.t-b.t);
+  if(!acts.length) return null;
+  const nearest=iso=>{const tgt=parseD(iso);let best=null,bd=1e9;for(const a of acts){const dd=Math.abs(a.t-tgt);if(dd<bd){bd=dd;best=a;}}return bd<=2.5*864e5?best:null;};
+  const H={1:{n:0,e:0,dir:0},7:{n:0,e:0,dir:0}};const recent=[];
+  for(const made of Object.keys(log).sort()){
+    const r=log[made].items[cat]; if(!r) continue; const base=r.base;
+    for(const h of [1,7]){
+      const pt=r.pts[h-1]; if(!pt) continue;
+      const a=nearest(pt.d); if(!a||isoOf(a.t)<=made) continue;   // alleen echt latere noteringen
+      H[h].n++; H[h].e+=Math.abs(pt.m-a.m)/a.m*100;
+      const ps=Math.sign(pt.m-base),as=Math.sign(a.m-base);
+      const flat=Math.abs(pt.m-base)/base<0.01&&Math.abs(a.m-base)/base<0.01;
+      if(ps===as||flat) H[h].dir++;
+      if(h===7) recent.push({target:pt.d,pred:pt.m,act:a.m,err:(pt.m-a.m)/a.m*100});
+    }
+  }
+  recent.sort((a,b)=>b.target.localeCompare(a.target));
+  const mk=h=>H[h].n?{n:H[h].n,mape:H[h].e/H[h].n,dir:H[h].dir/H[h].n*100}:null;
+  return {h1:mk(1),h7:mk(7),recent:recent.slice(0,6)};
+}
+function renderModelCheck(){
+  const box=document.getElementById("accbox"); if(!box) return;
+  let any=false, html="";
+  for(const c of CATS){
+    const g=gradeForCat(c); if(!g||(!g.h1&&!g.h7)) continue; any=true;
+    const f=o=>o?`${o.mape.toFixed(0)}% / ${o.dir.toFixed(0)}% (n=${o.n})`:"–";
+    html+=`<div class="srow"><span>${c}</span><span class="tnum" style="font-size:12px;color:var(--label2);">1d ${f(g.h1)} · 7d ${f(g.h7)}</span></div>`;
+  }
+  box.innerHTML = any
+    ? `<div class="srow" style="border:none;color:var(--label3);font-size:11px;padding-bottom:2px;">per product · afwijking / richting-goed</div>${html}`
+    : `<div class="srow" style="border:none;color:var(--label2);font-size:13px;">Nog geen uitkomsten. Elke voorspelling wordt vastgelegd en hier beoordeeld zodra de echte prijs binnen is.</div>`;
+}
+function exportFcLog(){
+  const raw=lsGet("vpt_fclog")||"{}";
+  const payload=JSON.stringify({exported:new Date().toISOString(),latest:DATA&&DATA.latest,log:JSON.parse(raw)});
+  let done=false;
+  try{ if(navigator.clipboard&&navigator.clipboard.writeText){ navigator.clipboard.writeText(payload); done=true; } }catch(e){}
+  try{
+    const blob=new Blob([payload],{type:"application/json"});
+    const a=document.createElement("a");a.href=URL.createObjectURL(blob);
+    a.download="veg-prices-voorspel-log.json";document.body.appendChild(a);a.click();a.remove();
+    done=true;
+  }catch(e){}
+  amsg(done?"✅ Voorspel-log gekopieerd + gedownload. Stuur 'm naar Claude.":"Kon niet exporteren op dit toestel.", done?"ok":"bad");
+}
 
 function renderDetail(){
   const cat=curCat,s=seriesForCurrent(cat);if(!s.length)return;const ld=s[s.length-1].t;
@@ -900,7 +973,7 @@ async function adminLogin(){
   let ok=!ADMIN_HASH;
   if(!ok){ok=(await sha(pw))===ADMIN_HASH;}
   if(ok){document.getElementById("adminlogin").classList.add("hidden");document.getElementById("adminpanel").classList.remove("hidden");
-    document.getElementById("ghtoken").value=lsGet("vpt_ghtoken")||"";}
+    document.getElementById("ghtoken").value=lsGet("vpt_ghtoken")||"";renderModelCheck();}
   else amsg("Verkeerd wachtwoord","bad");
 }
 function amsg(t,c){document.getElementById("adminmsg").innerHTML=`<div class="msg ${c}">${t}</div>`;}
@@ -996,7 +1069,7 @@ if("serviceWorker" in navigator){
 async function boot(){
   await loadData();deriveData();renderList();maybeShowInstall();
   // Background: load weather + retrain summary for richer forecast direction
-  loadWeather().then(()=>{const el=document.getElementById("summary");if(el){
+  loadWeather().then(()=>{logForecasts();const el=document.getElementById("summary");if(el){
     const c=(DATA.commentary||"").trim();
     el.innerHTML=`<div class="card"><div class="lbl">Marktupdate</div><div class="body">${genSummary()}</div>${c?`<div class="comment">${c.replace(/</g,"&lt;")}</div>`:""}</div>`;
   }});
