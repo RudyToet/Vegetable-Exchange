@@ -163,6 +163,11 @@ svg.chart{display:block;width:100%;overflow:visible;}
 .gate .err{color:var(--red);font-size:13px;height:16px;}
 .gearbtn{margin-left:auto;font-size:20px;cursor:pointer;opacity:.5;padding:4px;}
 .gearbtn:active{opacity:1;}
+.predtoggle{font-size:12px;color:var(--accent);font-weight:600;text-align:right;padding:6px 2px 2px;cursor:pointer;}
+.prodopt{display:flex;align-items:center;justify-content:space-between;padding:11px 2px;border-bottom:.5px solid var(--sep);font-size:15px;cursor:pointer;}
+.prodopt .chk{width:22px;height:22px;border-radius:6px;border:2px solid var(--sep);display:flex;align-items:center;justify-content:center;font-size:14px;color:#fff;}
+.prodopt.on .chk{background:var(--accent);border-color:var(--accent);}
+.prodopt.off{opacity:.5;}
 .sheet{position:fixed;inset:0;background:rgba(0,0,0,.6);z-index:90;display:none;align-items:flex-end;}
 .sheet.on{display:flex;}
 .sheet-inner{background:#1c1c1e;width:100%;max-width:540px;margin:0 auto;border-radius:20px 20px 0 0;padding:20px 16px 30px;
@@ -210,6 +215,7 @@ svg.chart{display:block;width:100%;overflow:visible;}
   <div class="brandrow">
     <img src="logo.png" alt="" onerror="this.style.display='none'">
     <div class="ltitle" style="padding:0;flex:1;">Veg Prices</div>
+    <div class="gearbtn" onclick="openProducts()" aria-label="Producten kiezen">☰</div>
     <div class="gearbtn" onclick="openAdmin()">⚙︎</div>
   </div>
   <div class="lsub" id="listdate"></div>
@@ -234,6 +240,20 @@ svg.chart{display:block;width:100%;overflow:visible;}
     </div>
   </div>
   <div id="detailbody"></div>
+</div>
+
+<!-- PRODUCTEN SHEET -->
+<div class="sheet" id="productsheet">
+  <div class="sheet-inner">
+    <h2>Producten op het hoofdscherm</h2>
+    <p style="font-size:13px;color:var(--label2);margin-top:4px;">Tik om een product te tonen of te verbergen. Geldt alleen voor dit toestel.</p>
+    <div id="productopts"></div>
+    <div class="row-btns">
+      <button class="btn sec" onclick="showAllProducts()">Alles tonen</button>
+      <button class="btn" onclick="closeProducts()">Klaar</button>
+    </div>
+    <div class="close" onclick="closeProducts()">Sluiten</div>
+  </div>
 </div>
 
 <!-- FILTER SHEET -->
@@ -349,6 +369,11 @@ async function loadData(){
 }
 function seriesFor(cat){return DATA.daily.filter(x=>x.c===cat).map(x=>({t:parseD(x.d),m:x.m})).sort((a,b)=>a.t-b.t);}
 let currentFilter = null;  // null = all sizes (default); array of sizes = filtered
+function showPred(){return lsGet("vpt_hidepred")!=="1";}
+function togglePred(){lsSet("vpt_hidepred",showPred()?"1":"0");renderDetail();}
+function getHidden(){try{return new Set(JSON.parse(lsGet("vpt_hidden")||"[]"));}catch(e){return new Set();}}
+function setHidden(set){lsSet("vpt_hidden",JSON.stringify([...set]));}
+function visibleCats(){const h=getHidden();const v=CATS.filter(c=>!h.has(c));return v.length?v:CATS;}
 function seriesForFiltered(cat,sizes){
   if(!sizes||!sizes.length)return seriesFor(cat);
   const sset=new Set(sizes);const agg={};
@@ -643,7 +668,7 @@ function renderList(){
   document.getElementById("summary").innerHTML=
     `<div class="card"><div class="lbl">Marktupdate</div><div class="body">${genSummary()}</div>${comment?`<div class="comment">${comment.replace(/</g,"&lt;")}</div>`:""}</div>`;
   const ld=latestDate();let html="";
-  for(const c of CATS){
+  for(const c of visibleCats()){
     const s=seriesFor(c);if(!s.length)continue;const cur=s[s.length-1].m;
     const prev=s.length>=2?s[s.length-2].m:cur;const ch=prev?(cur-prev)/prev*100:0;
     const wk=new Date(ld);wk.setDate(wk.getDate()-30);const sv=s.filter(p=>p.t>=wk).map(p=>p.m);
@@ -659,7 +684,7 @@ function renderList(){
   document.getElementById("rows").innerHTML=html;
   // alerts
   let al="";const tgt=new Date(ld);tgt.setDate(tgt.getDate()-7);let arr=[];
-  for(const c of CATS){const s=seriesFor(c);if(!s.length)continue;const cur=s[s.length-1].m;
+  for(const c of visibleCats()){const s=seriesFor(c);if(!s.length)continue;const cur=s[s.length-1].m;
     let p7=null,p7d=null;for(const p of s)if(p.t<=tgt){p7=p.m;p7d=p.t;}
     if(p7){const ch=(cur-p7)/p7*100;if(Math.abs(ch)>=10)arr.push([c,p7,cur,p7d,ch]);}}
   arr.sort((a,b)=>Math.abs(b[4])-Math.abs(a[4]));
@@ -886,7 +911,7 @@ function renderDetail(){
   const ch=buildChart(hist,fc,up);
   let segHtml=Object.keys(PERIODS).map(p=>`<button class="${p===curPeriod?"on":""}" onclick="setPeriod('${p}')">${p}</button>`).join("");
   let predHtml="";
-  if(fc){
+  if(fc && showPred()){
     const p7d=fc.points[6]||fc.points[fc.points.length-1];
     const p7=p7d.m,pd=p7-cur,pp=cur?pd/cur*100:0;
     const acc=ACC7[cat.toLowerCase()]||{mape:25,dir:null};
@@ -916,6 +941,7 @@ function renderDetail(){
     <div class="scrub" id="scrub"><span class="sp tnum" id="scrubp"></span><span class="sd tnum" id="scrubd"></span></div>
     <div class="chartwrap" id="chartwrap">${ch.svg}</div>
     <div class="seg">${segHtml}</div>
+    <div class="predtoggle" onclick="togglePred()">${showPred()?"🔮 Voorspelling verbergen":"🔮 Voorspelling tonen"}</div>
     ${predHtml}
     <div class="stats">
       <div class="stat"><div class="l">Laag ${curPeriod}</div><div class="v tnum">${eur(mn)}</div></div>
@@ -976,7 +1002,17 @@ function applyFilter(){
 function resetFilter(){currentFilter=null;closeFilter();renderDetail();updateFilterButton();}
 function updateFilterButton(){const b=document.getElementById("filterbtn");if(b)b.classList.toggle("on",!!currentFilter);}
 function openAdmin(){document.getElementById("adminsheet").classList.add("on");}
-function closeAdmin(){document.getElementById("adminsheet").classList.remove("on");}
+function renderProductOpts(){
+  const h=getHidden();
+  document.getElementById("productopts").innerHTML=CATS.map(c=>{
+    const on=!h.has(c);
+    return `<div class="prodopt ${on?'on':'off'}" onclick="toggleCat('${c.replace(/'/g,"\\'")}')"><span>${c}</span><span class="chk">${on?'✓':''}</span></div>`;
+  }).join("");
+}
+function openProducts(){renderProductOpts();document.getElementById("productsheet").classList.add("on");}
+function closeProducts(){document.getElementById("productsheet").classList.remove("on");}
+function toggleCat(c){const h=getHidden();if(h.has(c))h.delete(c);else h.add(c);setHidden(h);renderProductOpts();renderList();}
+function showAllProducts(){setHidden(new Set());renderProductOpts();renderList();}function closeAdmin(){document.getElementById("adminsheet").classList.remove("on");}
 async function adminLogin(){
   const pw=document.getElementById("adminpw").value;
   let ok=!ADMIN_HASH;
